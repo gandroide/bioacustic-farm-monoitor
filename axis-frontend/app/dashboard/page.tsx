@@ -8,6 +8,7 @@ import { AlertsChart } from "@/components/dashboard/alerts-chart";
 import { EventsTable } from "@/components/dashboard/events-table";
 import { Button } from "@/components/ui/button";
 import { Activity, LogOut, RefreshCw, Settings } from "lucide-react";
+export const dynamic = 'force-dynamic';
 
 export default function DashboardPage() {
   const router = useRouter();

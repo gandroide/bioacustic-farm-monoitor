@@ -26,6 +26,18 @@ from collections import deque
 import pyaudio
 import numpy as np
 import numpy.typing as npt
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+
+# ========== CARGAR VARIABLES DE ENTORNO ==========
+
+# Cargar configuración desde .env
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DEVICE_ID = os.getenv("DEVICE_ID", "mac-dev-01")
 
 
 # ========== CONFIGURACIÓN ==========
@@ -70,6 +82,28 @@ def setup_logger(name: str = "AXIS.Edge") -> logging.Logger:
 
 
 logger = setup_logger()
+
+
+# ========== INICIALIZACIÓN DE SUPABASE ==========
+
+def initialize_supabase() -> Optional[Client]:
+    """
+    Inicializa el cliente de Supabase.
+    
+    Returns:
+        Cliente de Supabase o None si no está configurado
+    """
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            logger.info("✓ Cliente de Supabase inicializado correctamente")
+            return client
+        except Exception as e:
+            logger.error(f"Error inicializando Supabase: {e}")
+            return None
+    else:
+        logger.warning("⚠ Supabase no configurado (falta SUPABASE_URL o SUPABASE_KEY en .env)")
+        return None
 
 
 # ========== CAPA DE ABSTRACCIÓN: ANÁLISIS DE AUDIO ==========
@@ -481,7 +515,8 @@ class BioacousticMonitor:
         audio_config: AudioConfig,
         analysis_config: AnalysisConfig,
         recording_config: RecordingConfig,
-        analyzer: Optional[AudioAnalyzer] = None
+        analyzer: Optional[AudioAnalyzer] = None,
+        supabase_client: Optional[Client] = None
     ):
         """
         Inicializa el monitor bioacústico.
@@ -491,6 +526,7 @@ class BioacousticMonitor:
             analysis_config: Configuración de análisis
             recording_config: Configuración de grabación
             analyzer: Analizador de audio (si None, usa SimpleAudioAnalyzer)
+            supabase_client: Cliente de Supabase para logging en la nube
         """
         self.audio_config = audio_config
         self.analysis_config = analysis_config
@@ -499,6 +535,7 @@ class BioacousticMonitor:
         # Componentes
         self.microphone = MicrophoneCapture(audio_config)
         self.analyzer = analyzer or SimpleAudioAnalyzer(analysis_config)
+        self.supabase = supabase_client
         
         # Estado
         self._is_running: bool = False
@@ -590,6 +627,107 @@ class BioacousticMonitor:
             flush=True
         )
     
+    def _upload_audio_to_storage(self, local_filepath: str, timestamp: str) -> Optional[str]:
+        """
+        Sube el archivo de audio a Supabase Storage.
+        
+        Args:
+            local_filepath: Ruta local del archivo
+            timestamp: Timestamp para el nombre del archivo
+            
+        Returns:
+            URL pública del archivo o None si falla
+        """
+        if not self.supabase:
+            return None
+        
+        try:
+            # Construir ruta en el bucket: device_id/timestamp.wav
+            storage_path = f"{DEVICE_ID}/{timestamp}.wav"
+            
+            # Leer el archivo
+            with open(local_filepath, 'rb') as audio_file:
+                audio_data = audio_file.read()
+            
+            # Subir a Supabase Storage
+            logger.info(f"📤 Subiendo audio a Storage: {storage_path}")
+            
+            self.supabase.storage.from_("alerts").upload(
+                path=storage_path,
+                file=audio_data,
+                file_options={"content-type": "audio/wav"}
+            )
+            
+            # Obtener URL pública
+            public_url = self.supabase.storage.from_("alerts").get_public_url(storage_path)
+            
+            logger.info("✓ Audio subido exitosamente")
+            logger.info(f"  URL: {public_url[:60]}...")
+            
+            return public_url
+            
+        except Exception as e:
+            logger.error(f"✗ Error subiendo audio a Storage: {e}")
+            return None
+    
+    def _send_alert_to_supabase_async(
+        self, 
+        volume: float, 
+        frequency: float, 
+        local_filepath: str,
+        timestamp: str
+    ) -> None:
+        """
+        Sube el audio a Storage y envía los datos de la alerta a Supabase.
+        Se ejecuta en un thread separado para no bloquear la captura.
+        
+        Args:
+            volume: Métrica de volumen
+            frequency: Métrica de frecuencia
+            local_filepath: Ruta local del archivo de audio guardado
+            timestamp: Timestamp del evento
+        """
+        if not self.supabase:
+            logger.warning("⚠ Supabase no configurado, solo se guardó localmente")
+            return
+        
+        try:
+            # 1. Subir archivo a Storage
+            audio_url = self._upload_audio_to_storage(local_filepath, timestamp)
+            
+            # 2. Calcular confidence como porcentaje normalizado del RMS
+            confidence = min(volume / 1000.0, 1.0)  # Normalizar a 0-1
+            
+            # 3. Preparar datos del evento
+            event_data = {
+                "created_at": datetime.now().isoformat(),
+                "device_id": DEVICE_ID,
+                "alert_type": "noise_threshold",
+                "confidence": float(confidence),
+                "metadata": {
+                    "rms": float(volume),
+                    "zcr": float(frequency),
+                    "audio_file_local": local_filepath,
+                    "audio_url": audio_url if audio_url else None,
+                    "storage_path": f"{DEVICE_ID}/{timestamp}.wav" if audio_url else None
+                }
+            }
+            
+            # 4. Insertar evento en la base de datos
+            response = self.supabase.table("events").insert(event_data).execute()
+            
+            event_id = response.data[0].get('id', 'N/A') if response.data else 'N/A'
+            logger.info(f"✓ Evento registrado en base de datos (ID: {event_id})")
+            
+            if audio_url:
+                logger.info("✓ Sistema completo: Audio en nube + Registro en BD")
+            else:
+                logger.warning("⚠ Audio no subido, pero evento registrado (solo archivo local)")
+            
+        except Exception as e:
+            logger.error(f"✗ Error en proceso de Supabase: {e}")
+            logger.info(f"  → Archivo local conservado: {local_filepath}")
+    
     def _handle_alert(self, volume: float, frequency: float) -> None:
         """
         Maneja una alerta: graba audio y registra el evento.
@@ -612,7 +750,7 @@ class BioacousticMonitor:
                 time.sleep(0.1)
                 print(".", end='', flush=True)
             
-            # Generar nombre de archivo
+            # Generar nombre de archivo con timestamp
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"alerta_{timestamp}_vol{int(volume)}_freq{int(frequency)}.wav"
             filepath = os.path.join(
@@ -620,11 +758,23 @@ class BioacousticMonitor:
                 filename
             )
             
-            # Guardar grabación
+            # Guardar grabación localmente
             saved_path = self.microphone.stop_recording_and_save(filepath)
-            logger.info(f"\n[OK] Archivo guardado: {saved_path}")
+            logger.info(f"\n[OK] Archivo guardado localmente: {saved_path}")
             
-            # TODO: Aquí se podría enviar a Supabase/Cloud en el futuro
+            # Subir a Supabase de forma asíncrona (Storage + Database)
+            # Esto NO bloquea el monitoreo, se ejecuta en paralelo
+            if self.supabase:
+                upload_thread = threading.Thread(
+                    target=self._send_alert_to_supabase_async,
+                    args=(volume, frequency, saved_path, timestamp),
+                    daemon=True,
+                    name="SupabaseUploadThread"
+                )
+                upload_thread.start()
+                logger.info("🔄 Subida a Supabase en segundo plano...")
+            else:
+                logger.info("ℹ️  Supabase no configurado - solo guardado local")
             
         except Exception as e:
             logger.error(f"Error manejando alerta: {e}")
@@ -650,11 +800,15 @@ def main() -> None:
     analysis_cfg = AnalysisConfig()
     recording_cfg = RecordingConfig()
     
+    # Inicializar Supabase
+    supabase_client = initialize_supabase()
+    
     # Crear y ejecutar monitor
     monitor = BioacousticMonitor(
         audio_config=audio_cfg,
         analysis_config=analysis_cfg,
-        recording_config=recording_cfg
+        recording_config=recording_cfg,
+        supabase_client=supabase_client
     )
     
     monitor.start()

@@ -2,4 +2,6 @@ venv/
 grabaciones/
 __pycache__/
 .DS_Store
+.env
+*.pyc
 

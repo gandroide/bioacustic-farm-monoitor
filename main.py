@@ -1,239 +1,664 @@
 """
 Sistema de Monitoreo Bioacústico para Granjas Porcinas
-Versión: 0.6 (Data Collector)
+Versión: 0.7 (Refactorización Profesional)
 Edge Device: Raspberry Pi / Mac Dev
 
-Cambios v0.6:
-- INTEGRACIÓN DE GRABADORA:
-  Ahora, cuando se detecta una alarma, el sistema graba 3 segundos de audio
-  y los guarda en la carpeta 'grabaciones/' como archivo .wav.
-  Esto servirá para crear el Dataset de entrenamiento para la IA.
+Cambios v0.7:
+- Refactorización completa con Type Hints (PEP 484)
+- Arquitectura modular con separación de responsabilidades
+- Clase Brain abstracta lista para integración de ML
+- Manejo robusto de errores con reconexión automática
+- Optimización de uso de CPU
+- Código listo para producción
 """
+
+import os
+import time
+import wave
+import threading
+import logging
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional, Tuple, List
+from collections import deque
 
 import pyaudio
 import numpy as np
-import time
-import threading
-import logging
-import wave
-import os
-from datetime import datetime
+import numpy.typing as npt
 
-# --- CONFIGURACIÓN ---
-RATE = 48000              
-CHUNK = 1024              
-CHANNELS = 1              
-FORMAT = pyaudio.paInt16  
 
-RMS_THRESHOLD = 300       
-GAIN = 5.0
-ZCR_THRESHOLD = 80        
+# ========== CONFIGURACIÓN ==========
 
-# Configuración de Grabación
-RECORD_SECONDS = 3        # Cuánto tiempo grabar tras la alerta
-OUTPUT_DIR = "grabaciones" # Carpeta donde se guardarán los audios
+@dataclass(frozen=True)
+class AudioConfig:
+    """Configuración de captura de audio."""
+    sample_rate: int = 48000
+    chunk_size: int = 1024
+    channels: int = 1
+    format: int = pyaudio.paInt16
+    device_index: Optional[int] = None  # None = auto-detect
+    prefer_iphone: bool = True  # Buscar iPhone primero
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
-logger = logging.getLogger("AXIS.Edge")
 
-# Aseguramos que exista la carpeta de grabaciones
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
+@dataclass(frozen=True)
+class AnalysisConfig:
+    """Configuración de análisis de audio."""
+    rms_threshold: float = 300.0
+    zcr_threshold: int = 80
+    gain: float = 5.0
+    cooldown_seconds: float = 5.0  # Tiempo mínimo entre alertas
 
-class AudioEar:
-    def __init__(self):
-        self.p = pyaudio.PyAudio() 
-        self.stream = None
-        self.is_listening = False
-        self.audio_queue = []
-        self.lock = threading.Lock()
-        self.thread = None
+
+@dataclass(frozen=True)
+class RecordingConfig:
+    """Configuración de grabación."""
+    duration_seconds: int = 3
+    output_directory: str = "grabaciones"
+
+
+# ========== CONFIGURACIÓN DE LOGGING ==========
+
+def setup_logger(name: str = "AXIS.Edge") -> logging.Logger:
+    """Configura el sistema de logging."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    return logging.getLogger(name)
+
+
+logger = setup_logger()
+
+
+# ========== CAPA DE ABSTRACCIÓN: ANÁLISIS DE AUDIO ==========
+
+class AudioAnalyzer(ABC):
+    """
+    Interfaz abstracta para analizadores de audio.
+    Permite reemplazar fácilmente el análisis simple por un modelo de ML.
+    """
+    
+    @abstractmethod
+    def analyze(self, audio_data: bytes) -> Tuple[float, float]:
+        """
+        Analiza un fragmento de audio y retorna métricas.
         
-        # Variables para grabación
-        self.is_recording = False
-        self.recording_frames = []
-
-    def list_devices(self):
-        print("\n--- DISPOSITIVOS DETECTADOS ---")
-        info = self.p.get_host_api_info_by_index(0)
-        numdevices = info.get('deviceCount')
-        for i in range(0, numdevices):
-            dev = self.p.get_device_info_by_host_api_device_index(0, i)
-            if dev.get('maxInputChannels') > 0:
-                print(f"ID {i}: {dev.get('name')}")
-        print("-------------------------------\n")
+        Args:
+            audio_data: Datos de audio en formato raw bytes
+            
+        Returns:
+            Tuple con (métrica_volumen, métrica_frecuencia)
+        """
+        pass
+    
+    @abstractmethod
+    def should_trigger_alert(self, volume_metric: float, frequency_metric: float) -> bool:
+        """
+        Determina si se debe disparar una alerta.
         
-    def _capture_loop(self):
-        while self.is_listening:
-            try:
-                data = self.stream.read(CHUNK, exception_on_overflow=False)
-                
-                with self.lock:
-                    # 1. Para el análisis en tiempo real (solo guardamos el último)
-                    self.audio_queue.append(data)
-                    if len(self.audio_queue) > 1: self.audio_queue.pop(0)
-                    
-                    # 2. Para la grabación (si está activa, acumulamos todo)
-                    if self.is_recording:
-                        self.recording_frames.append(data)
-                        
-            except Exception:
-                pass
-    
-    def start(self):
-        try:
-            self.stream = self.p.open(
-                format=FORMAT,
-                channels=CHANNELS,
-                rate=RATE,
-                input=True,
-                input_device_index=2, # <--- IPHONE ID
-                frames_per_buffer=CHUNK
-            )
-            self.is_listening = True
-            self.thread = threading.Thread(target=self._capture_loop, daemon=True)
-            self.thread.start()
-        except Exception as e:
-            print(f"Error Mic: {e}")
-            raise
-    
-    def start_recording(self):
-        """Activa la bandera de grabación"""
-        with self.lock:
-            self.recording_frames = [] # Limpiar buffer anterior
-            self.is_recording = True
+        Args:
+            volume_metric: Métrica de volumen del análisis
+            frequency_metric: Métrica de frecuencia del análisis
             
-    def stop_and_save_recording(self, filename):
-        """Detiene la grabación y guarda el archivo WAV"""
-        with self.lock:
-            self.is_recording = False
-            frames_to_save = self.recording_frames[:] # Copia de seguridad
-            
-        # Guardar archivo WAV
-        filepath = os.path.join(OUTPUT_DIR, filename)
-        wf = wave.open(filepath, 'wb')
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(self.p.get_sample_size(FORMAT))
-        wf.setframerate(RATE)
-        wf.writeframes(b''.join(frames_to_save))
-        wf.close()
-        return filepath
+        Returns:
+            True si se debe disparar alerta, False en caso contrario
+        """
+        pass
 
-    def get_latest_chunk(self):
-        with self.lock:
-            if self.audio_queue: return self.audio_queue[-1]
-            return None
-    
-    def stop(self):
-        self.is_listening = False
-        if self.thread: self.thread.join(timeout=1.0)
-        if self.stream: 
-            self.stream.stop_stream()
-            self.stream.close()
-        if self.p: self.p.terminate()
 
-class Brain:
-    def __init__(self):
-        self.rms_threshold = RMS_THRESHOLD
-        self.zcr_threshold = ZCR_THRESHOLD
-        self.last_trigger = 0
+class SimpleAudioAnalyzer(AudioAnalyzer):
+    """
+    Analizador de audio basado en RMS y Zero-Crossing Rate.
+    Implementación simple que será reemplazada por ML en el futuro.
+    """
     
-    def analyze_audio(self, audio_data):
-        if not audio_data: return 0.0, 0.0
+    def __init__(self, config: AnalysisConfig):
+        """
+        Inicializa el analizador.
+        
+        Args:
+            config: Configuración de análisis
+        """
+        self.config = config
+        self._last_alert_time: float = 0.0
+    
+    def analyze(self, audio_data: bytes) -> Tuple[float, float]:
+        """
+        Calcula RMS (volumen) y ZCR (frecuencia) del audio.
+        
+        Args:
+            audio_data: Datos de audio en formato raw bytes
+            
+        Returns:
+            Tuple con (rms, zero_crossing_rate)
+        """
+        if not audio_data:
+            return 0.0, 0.0
+        
         try:
-            audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float64)
-            if len(audio_array) == 0: return 0.0, 0.0
+            # Convertir bytes a array numpy
+            audio_array: npt.NDArray[np.float64] = np.frombuffer(
+                audio_data, 
+                dtype=np.int16
+            ).astype(np.float64)
             
-            mean_sq = np.mean(audio_array**2)
-            if mean_sq <= 0 or np.isnan(mean_sq): rms = 0.0
-            else: rms = np.sqrt(mean_sq) * GAIN
+            if len(audio_array) == 0:
+                return 0.0, 0.0
             
+            # Calcular RMS (Root Mean Square) - medida de volumen
+            mean_squared = np.mean(audio_array ** 2)
+            rms = 0.0 if mean_squared <= 0 or np.isnan(mean_squared) else \
+                  np.sqrt(mean_squared) * self.config.gain
+            
+            # Calcular Zero Crossing Rate - medida de frecuencia
             zero_crossings = np.nonzero(np.diff(audio_array > 0))[0]
             zcr = len(zero_crossings)
             
-            return rms, zcr
+            return float(rms), float(zcr)
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error en análisis de audio: {e}")
             return 0.0, 0.0
     
-    def should_trigger(self, rms, zcr):
-        now = time.time()
-        is_loud = rms > self.rms_threshold
-        is_high_pitch = zcr > self.zcr_threshold
+    def should_trigger_alert(self, volume_metric: float, frequency_metric: float) -> bool:
+        """
+        Determina si el sonido es lo suficientemente fuerte y agudo.
         
-        # Quitamos el cooldown aquí porque lo manejaremos en el monitor principal
-        # para que coincida con la grabación
+        Args:
+            volume_metric: Valor RMS del audio
+            frequency_metric: Valor ZCR del audio
+            
+        Returns:
+            True si cumple condiciones de alerta
+        """
+        current_time = time.time()
+        
+        # Verificar cooldown para evitar alertas repetidas
+        if current_time - self._last_alert_time < self.config.cooldown_seconds:
+            return False
+        
+        # Verificar umbrales
+        is_loud = volume_metric > self.config.rms_threshold
+        is_high_pitch = frequency_metric > self.config.zcr_threshold
+        
         if is_loud and is_high_pitch:
+            self._last_alert_time = current_time
             return True
+        
         return False
 
-class BioacousticMonitor:
-    def __init__(self):
-        self.ear = AudioEar()
-        self.brain = Brain()
-        self.running = False
-        self.is_processing_alert = False # Evita disparos múltiples mientras graba
+
+# ========== CAPA DE CAPTURA: MICRÓFONO ==========
+
+class MicrophoneCapture:
+    """
+    Gestiona la captura de audio desde el micrófono.
+    Maneja reconexión automática en caso de fallos.
+    """
     
-    def start(self):
-        self.ear.list_devices()
-        try:
-            self.ear.start()
-            self.running = True
-            print(f"MODO RECOLECCIÓN DE DATOS ACTIVO")
-            print(f"Las alertas se guardarán en la carpeta: ./{OUTPUT_DIR}/")
-            print("Intenta toser (Falso Positivo) y Silbar (Verdadero Positivo)...\n")
+    def __init__(self, config: AudioConfig):
+        """
+        Inicializa el sistema de captura de audio.
+        
+        Args:
+            config: Configuración de audio
+        """
+        self.config = config
+        self._audio_interface: Optional[pyaudio.PyAudio] = None
+        self._stream: Optional[pyaudio.Stream] = None
+        self._is_capturing: bool = False
+        self._capture_thread: Optional[threading.Thread] = None
+        
+        # Device index resuelto (puede ser diferente al config si se auto-detecta)
+        self._resolved_device_index: Optional[int] = config.device_index
+        
+        # Buffer circular para audio en tiempo real (solo último chunk)
+        self._realtime_buffer: deque = deque(maxlen=1)
+        
+        # Buffer de grabación (acumula frames cuando está grabando)
+        self._recording_frames: List[bytes] = []
+        self._is_recording: bool = False
+        
+        # Lock para thread-safety
+        self._lock = threading.Lock()
+        
+        # Control de reconexión
+        self._max_reconnect_attempts: int = 5
+        self._reconnect_delay: float = 2.0
+    
+    def _find_device_by_name(self, search_terms: List[str]) -> Optional[int]:
+        """
+        Busca un dispositivo de audio por términos de búsqueda en el nombre.
+        
+        Args:
+            search_terms: Lista de términos a buscar (ej: ["iPhone", "iPad"])
             
-            while self.running:
-                # Si estamos grabando, no analizamos, solo esperamos
-                if self.is_processing_alert:
+        Returns:
+            Índice del dispositivo encontrado o None
+        """
+        if not self._audio_interface:
+            self._audio_interface = pyaudio.PyAudio()
+        
+        try:
+            host_api_info = self._audio_interface.get_host_api_info_by_index(0)
+            num_devices = host_api_info.get('deviceCount', 0)
+            
+            for i in range(num_devices):
+                device_info = self._audio_interface.get_device_info_by_host_api_device_index(0, i)
+                if device_info.get('maxInputChannels', 0) > 0:
+                    device_name = device_info.get('name', '').lower()
+                    for term in search_terms:
+                        if term.lower() in device_name:
+                            logger.info(f"✓ Dispositivo encontrado: '{device_info.get('name')}' (ID: {i})")
+                            return i
+        except Exception as e:
+            logger.error(f"Error buscando dispositivo: {e}")
+        
+        return None
+    
+    def list_available_devices(self) -> None:
+        """Lista todos los dispositivos de entrada de audio disponibles."""
+        logger.info("=== DISPOSITIVOS DE AUDIO DISPONIBLES ===")
+        
+        if not self._audio_interface:
+            self._audio_interface = pyaudio.PyAudio()
+        
+        try:
+            host_api_info = self._audio_interface.get_host_api_info_by_index(0)
+            num_devices = host_api_info.get('deviceCount', 0)
+            
+            for i in range(num_devices):
+                device_info = self._audio_interface.get_device_info_by_host_api_device_index(0, i)
+                if device_info.get('maxInputChannels', 0) > 0:
+                    device_name = device_info.get('name')
+                    # Marcar el dispositivo seleccionado
+                    marker = " [SELECCIONADO]" if i == self._resolved_device_index else ""
+                    logger.info(f"  ID {i}: {device_name}{marker}")
+        except Exception as e:
+            logger.error(f"Error listando dispositivos: {e}")
+        
+        logger.info("=========================================")
+    
+    def start(self) -> None:
+        """
+        Inicia la captura de audio con reintentos automáticos.
+        Auto-detecta el micrófono del iPhone si está disponible.
+        
+        Raises:
+            RuntimeError: Si no se puede iniciar después de todos los reintentos
+        """
+        # Auto-detectar dispositivo si no está especificado
+        if self._resolved_device_index is None:
+            logger.info("Auto-detectando dispositivo de audio...")
+            
+            # Si prefiere iPhone, buscarlo primero
+            if self.config.prefer_iphone:
+                device_id = self._find_device_by_name(["iPhone", "iPad"])
+                if device_id is not None:
+                    self._resolved_device_index = device_id
+                    logger.info(f"→ Usando micrófono del iPhone/iPad (ID: {device_id})")
+                else:
+                    logger.warning("⚠ iPhone/iPad no encontrado, usando micrófono por defecto del Mac")
+                    # device_index = None usará el default
+            else:
+                logger.info("→ Usando micrófono por defecto del sistema")
+        
+        # Intentar iniciar con reintentos
+        for attempt in range(1, self._max_reconnect_attempts + 1):
+            try:
+                self._initialize_audio_stream()
+                self._is_capturing = True
+                self._capture_thread = threading.Thread(
+                    target=self._capture_loop,
+                    daemon=True,
+                    name="AudioCaptureThread"
+                )
+                self._capture_thread.start()
+                logger.info("✓ Captura de audio iniciada correctamente")
+                return
+                
+            except Exception as e:
+                logger.error(f"Intento {attempt}/{self._max_reconnect_attempts} falló: {e}")
+                
+                if attempt < self._max_reconnect_attempts:
+                    logger.info(f"Reintentando en {self._reconnect_delay}s...")
+                    time.sleep(self._reconnect_delay)
+                else:
+                    raise RuntimeError(
+                        f"No se pudo iniciar la captura después de {self._max_reconnect_attempts} intentos"
+                    )
+    
+    def _initialize_audio_stream(self) -> None:
+        """Inicializa PyAudio y abre el stream de audio."""
+        if not self._audio_interface:
+            self._audio_interface = pyaudio.PyAudio()
+        
+        self._stream = self._audio_interface.open(
+            format=self.config.format,
+            channels=self.config.channels,
+            rate=self.config.sample_rate,
+            input=True,
+            input_device_index=self._resolved_device_index,
+            frames_per_buffer=self.config.chunk_size
+        )
+    
+    def _capture_loop(self) -> None:
+        """Loop principal de captura (ejecutado en thread separado)."""
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
+        while self._is_capturing:
+            try:
+                # Leer chunk de audio
+                audio_data = self._stream.read(
+                    self.config.chunk_size,
+                    exception_on_overflow=False
+                )
+                
+                with self._lock:
+                    # Actualizar buffer en tiempo real
+                    self._realtime_buffer.append(audio_data)
+                    
+                    # Si está grabando, acumular frames
+                    if self._is_recording:
+                        self._recording_frames.append(audio_data)
+                
+                # Reset contador de errores
+                consecutive_errors = 0
+                
+            except Exception as e:
+                consecutive_errors += 1
+                logger.warning(f"Error en captura (#{consecutive_errors}): {e}")
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error("Demasiados errores consecutivos. Intentando reconectar...")
+                    self._attempt_reconnection()
+                    consecutive_errors = 0
+                
+                time.sleep(0.1)  # Evitar busy loop en caso de error
+    
+    def _attempt_reconnection(self) -> None:
+        """Intenta reconectar el stream de audio."""
+        try:
+            logger.info("Cerrando stream actual...")
+            if self._stream:
+                self._stream.stop_stream()
+                self._stream.close()
+            
+            logger.info("Reinicializando audio...")
+            time.sleep(1.0)
+            self._initialize_audio_stream()
+            logger.info("Reconexión exitosa")
+            
+        except Exception as e:
+            logger.error(f"Fallo en reconexión: {e}")
+    
+    def get_latest_audio_chunk(self) -> Optional[bytes]:
+        """
+        Obtiene el último chunk de audio capturado.
+        
+        Returns:
+            Datos de audio o None si no hay disponibles
+        """
+        with self._lock:
+            if self._realtime_buffer:
+                return self._realtime_buffer[0]
+            return None
+    
+    def start_recording(self) -> None:
+        """Inicia la grabación de audio."""
+        with self._lock:
+            self._recording_frames = []
+            self._is_recording = True
+        logger.debug("Grabación iniciada")
+    
+    def stop_recording_and_save(self, filepath: str) -> str:
+        """
+        Detiene la grabación y guarda el archivo WAV.
+        
+        Args:
+            filepath: Ruta donde guardar el archivo
+            
+        Returns:
+            Ruta del archivo guardado
+        """
+        with self._lock:
+            self._is_recording = False
+            frames_to_save = self._recording_frames.copy()
+        
+        # Guardar archivo WAV
+        try:
+            with wave.open(filepath, 'wb') as wav_file:
+                wav_file.setnchannels(self.config.channels)
+                wav_file.setsampwidth(
+                    self._audio_interface.get_sample_size(self.config.format)
+                )
+                wav_file.setframerate(self.config.sample_rate)
+                wav_file.writeframes(b''.join(frames_to_save))
+            
+            logger.info(f"Audio guardado: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logger.error(f"Error guardando audio: {e}")
+            raise
+    
+    def stop(self) -> None:
+        """Detiene la captura de audio y libera recursos."""
+        logger.info("Deteniendo captura de audio...")
+        self._is_capturing = False
+        
+        if self._capture_thread and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=2.0)
+        
+        if self._stream:
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            except Exception as e:
+                logger.warning(f"Error cerrando stream: {e}")
+        
+        if self._audio_interface:
+            try:
+                self._audio_interface.terminate()
+            except Exception as e:
+                logger.warning(f"Error terminando PyAudio: {e}")
+        
+        logger.info("Captura de audio detenida")
+
+
+# ========== CAPA DE COORDINACIÓN: MONITOR PRINCIPAL ==========
+
+class BioacousticMonitor:
+    """
+    Monitor principal que coordina captura, análisis y grabación.
+    """
+    
+    def __init__(
+        self,
+        audio_config: AudioConfig,
+        analysis_config: AnalysisConfig,
+        recording_config: RecordingConfig,
+        analyzer: Optional[AudioAnalyzer] = None
+    ):
+        """
+        Inicializa el monitor bioacústico.
+        
+        Args:
+            audio_config: Configuración de captura de audio
+            analysis_config: Configuración de análisis
+            recording_config: Configuración de grabación
+            analyzer: Analizador de audio (si None, usa SimpleAudioAnalyzer)
+        """
+        self.audio_config = audio_config
+        self.analysis_config = analysis_config
+        self.recording_config = recording_config
+        
+        # Componentes
+        self.microphone = MicrophoneCapture(audio_config)
+        self.analyzer = analyzer or SimpleAudioAnalyzer(analysis_config)
+        
+        # Estado
+        self._is_running: bool = False
+        self._is_processing_alert: bool = False
+        
+        # Crear directorio de grabaciones
+        os.makedirs(recording_config.output_directory, exist_ok=True)
+    
+    def start(self) -> None:
+        """Inicia el sistema de monitoreo."""
+        logger.info("=" * 50)
+        logger.info("Sistema de Monitoreo Bioacústico v0.7")
+        logger.info("=" * 50)
+        
+        # Listar dispositivos disponibles
+        self.microphone.list_available_devices()
+        
+        try:
+            # Iniciar captura
+            self.microphone.start()
+            self._is_running = True
+            
+            logger.info("Modo recolección de datos activo")
+            logger.info(f"Directorio de grabaciones: ./{self.recording_config.output_directory}/")
+            logger.info("Presiona Ctrl+C para detener\n")
+            
+            # Loop principal de monitoreo
+            self._monitoring_loop()
+            
+        except KeyboardInterrupt:
+            logger.info("\nInterrupción recibida. Apagando sistema...")
+        except Exception as e:
+            logger.error(f"Error crítico: {e}", exc_info=True)
+        finally:
+            self._shutdown()
+    
+    def _monitoring_loop(self) -> None:
+        """Loop principal de monitoreo y análisis."""
+        while self._is_running:
+            try:
+                # Si estamos procesando una alerta, esperamos
+                if self._is_processing_alert:
                     time.sleep(0.1)
                     continue
-
-                chunk = self.ear.get_latest_chunk()
-                if chunk:
-                    rms, zcr = self.brain.analyze_audio(chunk)
-                    
-                    vol_bar = "█" * min(int(rms / 20), 20)
-                    frq_bar = "▒" * min(int(zcr / 5), 20)
-                    
-                    status = "..."
-                    if rms > RMS_THRESHOLD and zcr > ZCR_THRESHOLD: status = "!!! DETECTADO !!!"
-                    
-                    print(f"\rVol:{int(rms):04d} |{vol_bar:<20}| Frq:{int(zcr):03d} |{frq_bar:<20}| {status}", end='', flush=True)
-                    
-                    if self.brain.should_trigger(rms, zcr):
-                        self.handle_alert(rms, zcr)
                 
+                # Obtener último chunk de audio
+                audio_chunk = self.microphone.get_latest_audio_chunk()
+                
+                if audio_chunk:
+                    # Analizar audio
+                    volume, frequency = self.analyzer.analyze(audio_chunk)
+                    
+                    # Visualización en consola
+                    self._display_metrics(volume, frequency)
+                    
+                    # Verificar si debe disparar alerta
+                    if self.analyzer.should_trigger_alert(volume, frequency):
+                        self._handle_alert(volume, frequency)
+                
+                # Control de CPU - evitar busy loop
                 time.sleep(0.05)
                 
-        except KeyboardInterrupt:
-            print("\nApagando...")
-        finally:
-            self.ear.stop()
-
-    def handle_alert(self, rms, zcr):
-        self.is_processing_alert = True
-        print(f"\n\n >>> ALERTA DETECTADA (Agudo: {int(zcr)}) - GRABANDO 3s... <<<")
+            except Exception as e:
+                logger.error(f"Error en loop de monitoreo: {e}")
+                time.sleep(0.5)  # Pausa en caso de error
+    
+    def _display_metrics(self, volume: float, frequency: float) -> None:
+        """
+        Muestra métricas en consola.
         
-        # 1. Iniciar Grabación
-        self.ear.start_recording()
+        Args:
+            volume: Métrica de volumen
+            frequency: Métrica de frecuencia
+        """
+        # Barras visuales
+        vol_bar = "█" * min(int(volume / 20), 20)
+        freq_bar = "▒" * min(int(frequency / 5), 20)
         
-        # 2. Esperar el tiempo de grabación
-        # Usamos un bucle con sleep pequeño para mantener la app viva
-        for _ in range(RECORD_SECONDS * 10):
-            time.sleep(0.1)
-            print(".", end='', flush=True)
+        # Estado
+        status = "..."
+        if (volume > self.analysis_config.rms_threshold and 
+            frequency > self.analysis_config.zcr_threshold):
+            status = "!!! DETECTADO !!!"
+        
+        print(
+            f"\rVol:{int(volume):04d} |{vol_bar:<20}| "
+            f"Frq:{int(frequency):03d} |{freq_bar:<20}| {status}",
+            end='',
+            flush=True
+        )
+    
+    def _handle_alert(self, volume: float, frequency: float) -> None:
+        """
+        Maneja una alerta: graba audio y registra el evento.
+        
+        Args:
+            volume: Métrica de volumen que disparó la alerta
+            frequency: Métrica de frecuencia que disparó la alerta
+        """
+        self._is_processing_alert = True
+        
+        logger.info(f"\n>>> ALERTA DETECTADA (Vol:{int(volume)}, Freq:{int(frequency)})")
+        logger.info(f"Grabando {self.recording_config.duration_seconds} segundos...")
+        
+        try:
+            # Iniciar grabación
+            self.microphone.start_recording()
             
-        # 3. Guardar Archivo
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"alerta_{timestamp}_rms{int(rms)}_zcr{int(zcr)}.wav"
-        path = self.ear.stop_and_save_recording(filename)
-        
-        print(f"\n [OK] Guardado en: {path}")
-        print(" Reanudando escucha...\n")
-        
-        time.sleep(1) # Pequeña pausa extra
-        self.is_processing_alert = False
+            # Esperar duración de grabación con feedback visual
+            for _ in range(self.recording_config.duration_seconds * 10):
+                time.sleep(0.1)
+                print(".", end='', flush=True)
+            
+            # Generar nombre de archivo
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"alerta_{timestamp}_vol{int(volume)}_freq{int(frequency)}.wav"
+            filepath = os.path.join(
+                self.recording_config.output_directory,
+                filename
+            )
+            
+            # Guardar grabación
+            saved_path = self.microphone.stop_recording_and_save(filepath)
+            logger.info(f"\n[OK] Archivo guardado: {saved_path}")
+            
+            # TODO: Aquí se podría enviar a Supabase/Cloud en el futuro
+            
+        except Exception as e:
+            logger.error(f"Error manejando alerta: {e}")
+        finally:
+            logger.info("Reanudando monitoreo...\n")
+            time.sleep(0.5)  # Pausa breve antes de reanudar
+            self._is_processing_alert = False
+    
+    def _shutdown(self) -> None:
+        """Apaga el sistema de forma ordenada."""
+        logger.info("Iniciando apagado del sistema...")
+        self._is_running = False
+        self.microphone.stop()
+        logger.info("Sistema detenido correctamente")
+
+
+# ========== PUNTO DE ENTRADA ==========
+
+def main() -> None:
+    """Punto de entrada principal de la aplicación."""
+    # Configuraciones
+    audio_cfg = AudioConfig()
+    analysis_cfg = AnalysisConfig()
+    recording_cfg = RecordingConfig()
+    
+    # Crear y ejecutar monitor
+    monitor = BioacousticMonitor(
+        audio_config=audio_cfg,
+        analysis_config=analysis_cfg,
+        recording_config=recording_cfg
+    )
+    
+    monitor.start()
+
 
 if __name__ == "__main__":
-    BioacousticMonitor().start()
+    main()

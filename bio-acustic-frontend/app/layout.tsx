@@ -31,6 +31,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" suppressHydrationWarning>
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="icon" href="/icono.png" />
+        <link rel="apple-touch-icon" href="/icono.png" />
+        <meta name="theme-color" content="#f59e0b" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Bio-Alert" />
+      </head>
       <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased dark`}>
         {children}
       </body>

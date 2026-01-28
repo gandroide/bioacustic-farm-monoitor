@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, Event } from "@/lib/supabase";
+import { supabase, Event, getCurrentUserProfile } from "@/lib/supabase";
 import { KPICards } from "@/components/dashboard/kpi-cards";
 import { AlertsChart } from "@/components/dashboard/alerts-chart";
 import { EventsTable } from "@/components/dashboard/events-table";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Activity, LogOut, RefreshCw, Settings } from "lucide-react";
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +17,36 @@ export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [farmName, setFarmName] = useState<string>("");
 
   const fetchEvents = async () => {
     try {
+      // Verificar autenticación y obtener perfil
+      const profile = await getCurrentUserProfile();
+      if (!profile) {
+        router.push('/login');
+        return;
+      }
+
+      // Si es super_admin, redirigir al panel de admin
+      if (profile.role === 'super_admin') {
+        router.push('/admin');
+        return;
+      }
+
+      // Obtener nombre de la granja
+      if (profile.farm_id) {
+        const { data: farmData } = await supabase
+          .from('farms')
+          .select('name')
+          .eq('id', profile.farm_id)
+          .single();
+        if (farmData) {
+          setFarmName(farmData.name);
+        }
+      }
+
+      // RLS filtrará automáticamente por farm_id del usuario
       const { data, error } = await supabase
         .from('events')
         .select('*')
@@ -64,7 +92,8 @@ export default function DashboardPage() {
     fetchEvents();
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     router.push('/login');
   };
 
@@ -87,7 +116,17 @@ export default function DashboardPage() {
               <Activity className="h-8 w-8 text-primary glow-warning" strokeWidth={2.5} />
               <div>
                 <h1 className="text-xl font-bold tracking-tight">Ontiveros Bio-Alert</h1>
-                <p className="text-xs text-muted-foreground">Panel de Monitoreo</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground">Panel de Monitoreo</p>
+                  {farmName && (
+                    <>
+                      <span className="text-xs text-muted-foreground">•</span>
+                      <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
+                        {farmName}
+                      </Badge>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 

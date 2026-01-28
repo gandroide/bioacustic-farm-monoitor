@@ -1,0 +1,50 @@
+{
+  "name": "Ontiveros Bio-Alert",
+  "short_name": "Bio-Alert",
+  "description": "Sistema de monitoreo bioacústico para granjas porcinas. Detecta aplastamiento de lechones mediante IA y alerta en tiempo real.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#f59e0b",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icono.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "business",
+    "productivity",
+    "utilities"
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Abrir panel de monitoreo",
+      "url": "/dashboard",
+      "icons": [
+        {
+          "src": "/icono.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}
+

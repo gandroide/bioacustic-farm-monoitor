@@ -1,7 +1,14 @@
 """
 Sistema de Monitoreo Bioacústico para Granjas Porcinas
-Versión: 0.7 (Refactorización Profesional)
+Versión: 0.8 (Multi-Tenant SaaS)
 Edge Device: Raspberry Pi / Mac Dev
+
+Cambios v0.8:
+- ✅ Soporte Multi-Tenant: FARM_ID obligatorio
+- ✅ Validación estricta de configuración antes de iniciar
+- ✅ Eventos vinculados a granjas específicas
+- ✅ Compatible con Row Level Security (RLS) en Supabase
+- ✅ Listo para despliegue en múltiples granjas clientes
 
 Cambios v0.7:
 - Refactorización completa con Type Hints (PEP 484)
@@ -38,6 +45,34 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DEVICE_ID = os.getenv("DEVICE_ID", "mac-dev-01")
+
+# ========== CONFIGURACIÓN MULTI-TENANT ==========
+# ⚠️ IMPORTANTE: Configura el FARM_ID antes de desplegar en una granja
+# Este UUID identifica la granja donde está instalado este dispositivo.
+# Obtén el UUID desde el Panel de Super Admin en la plataforma web.
+
+FARM_ID = os.getenv("FARM_ID", "")  # ← PEGAR UUID DE LA GRANJA AQUÍ
+
+# Validación crítica: No permitir ejecución sin FARM_ID
+if not FARM_ID or FARM_ID == "":
+    logger.error("=" * 60)
+    logger.error("❌ ERROR CRÍTICO: FARM_ID no configurado")
+    logger.error("=" * 60)
+    logger.error("")
+    logger.error("Este dispositivo DEBE estar vinculado a una granja específica.")
+    logger.error("Por favor, sigue estos pasos:")
+    logger.error("")
+    logger.error("1. Accede al Panel de Super Admin en la plataforma web")
+    logger.error("2. Copia el UUID de la granja donde está instalado este equipo")
+    logger.error("3. Agrega la variable de entorno FARM_ID en tu archivo .env:")
+    logger.error("   FARM_ID=uuid-de-tu-granja-aqui")
+    logger.error("")
+    logger.error("O modifica directamente la línea 48 de este archivo:")
+    logger.error("   FARM_ID = 'uuid-de-tu-granja-aqui'")
+    logger.error("")
+    logger.error("Sin esta configuración, los datos NO se registrarán correctamente.")
+    logger.error("=" * 60)
+    raise SystemExit(1)
 
 
 # ========== CONFIGURACIÓN ==========
@@ -547,8 +582,10 @@ class BioacousticMonitor:
     def start(self) -> None:
         """Inicia el sistema de monitoreo."""
         logger.info("=" * 50)
-        logger.info("Sistema de Monitoreo Bioacústico v0.7")
+        logger.info("Sistema de Monitoreo Bioacústico v0.8 (Multi-Tenant)")
         logger.info("=" * 50)
+        logger.info(f"Granja: {FARM_ID[:8]}...{FARM_ID[-4:]}")
+        logger.info(f"Dispositivo: {DEVICE_ID}")
         
         # Listar dispositivos disponibles
         self.microphone.list_available_devices()
@@ -698,10 +735,11 @@ class BioacousticMonitor:
             # 2. Calcular confidence como porcentaje normalizado del RMS
             confidence = min(volume / 1000.0, 1.0)  # Normalizar a 0-1
             
-            # 3. Preparar datos del evento
+            # 3. Preparar datos del evento (MULTI-TENANT)
             event_data = {
                 "created_at": datetime.now().isoformat(),
                 "device_id": DEVICE_ID,
+                "farm_id": FARM_ID,  # ← NUEVO: Vinculación a la granja
                 "alert_type": "noise_threshold",
                 "confidence": float(confidence),
                 "metadata": {

@@ -1,11 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Play, Pause, Activity } from "lucide-react";
+import { Activity, AlertTriangle, Zap } from "lucide-react";
 import { Event } from "@/lib/supabase";
 
 interface EventsTableProps {
@@ -13,7 +11,6 @@ interface EventsTableProps {
 }
 
 export function EventsTable({ events }: EventsTableProps) {
-  const [playingId, setPlayingId] = useState<string | null>(null);
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -40,30 +37,44 @@ export function EventsTable({ events }: EventsTableProps) {
   const getConfidenceBadge = (confidence: number) => {
     const level = getConfidenceLevel(confidence);
     const className = getConfidenceBadgeClass(level);
-    return <Badge className={`${className} font-mono text-[10px]`}>{level.toUpperCase()} {(confidence * 100).toFixed(0)}%</Badge>;
+    const percentage = (confidence * 100).toFixed(0);
+    return (
+      <Badge className={`${className} font-mono text-sm px-4 py-1.5`}>
+        {level.toUpperCase()} {percentage}%
+      </Badge>
+    );
   };
 
-  const getAlertTypeColor = (type: string) => {
-    if (type === 'noise_threshold') return 'text-primary';
-    if (type === 'high_pitch') return 'text-destructive';
-    if (type === 'ml_prediction') return 'text-accent';
-    return 'text-muted-foreground';
-  };
-
-  const getAlertTypeName = (type: string) => {
-    if (type === 'noise_threshold') return 'umbral de ruido';
-    if (type === 'high_pitch') return 'tono agudo';
-    if (type === 'ml_prediction') return 'predicción ML';
-    return type;
-  };
-
-  const toggleAudio = (eventId: string) => {
-    if (playingId === eventId) {
-      setPlayingId(null);
-    } else {
-      setPlayingId(eventId);
-      // In a real implementation, integrate wavesurfer.js here
-      setTimeout(() => setPlayingId(null), 3000); // Simulate playback
+  const getAlertTypeDetails = (type: string) => {
+    switch (type) {
+      case 'noise_threshold':
+        return {
+          name: 'Umbral de Ruido Excedido',
+          color: 'text-amber-500',
+          icon: AlertTriangle,
+          bgClass: 'bg-amber-500/10'
+        };
+      case 'high_pitch':
+        return {
+          name: 'Chillido de Estrés',
+          color: 'text-red-500',
+          icon: Zap,
+          bgClass: 'bg-red-500/10'
+        };
+      case 'ml_prediction':
+        return {
+          name: 'Predicción ML: Riesgo Alto',
+          color: 'text-emerald-500',
+          icon: Activity,
+          bgClass: 'bg-emerald-500/10'
+        };
+      default:
+        return {
+          name: type,
+          color: 'text-muted-foreground',
+          icon: Activity,
+          bgClass: 'bg-muted/50'
+        };
     }
   };
 
@@ -72,13 +83,13 @@ export function EventsTable({ events }: EventsTableProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-lg font-semibold">Registro de Eventos</CardTitle>
+            <CardTitle className="text-lg font-semibold">Registro de Eventos IA</CardTitle>
             <CardDescription className="font-mono text-xs mt-1">
-              Historial de alertas en tiempo real
+              Detecciones del sistema de análisis bioacústico
             </CardDescription>
           </div>
-          <Badge variant="outline" className="font-mono text-xs">
-            {events.length} eventos
+          <Badge variant="outline" className="font-mono text-xs bg-primary/10 border-primary/30">
+            {events.length} eventos detectados
           </Badge>
         </div>
       </CardHeader>
@@ -87,80 +98,65 @@ export function EventsTable({ events }: EventsTableProps) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent border-border/50">
-                <TableHead className="w-[120px]">Hora</TableHead>
-                <TableHead>Dispositivo</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead className="text-center">Confianza</TableHead>
-                <TableHead className="text-center">Métricas</TableHead>
-                <TableHead className="text-center">Audio</TableHead>
+                <TableHead className="w-[140px]">Timestamp</TableHead>
+                <TableHead>Tipo de Alerta</TableHead>
+                <TableHead className="text-center w-[180px]">Confianza IA</TableHead>
+                <TableHead className="text-center w-[220px]">Métricas Bioacústicas</TableHead>
+                <TableHead className="w-[180px]">Dispositivo</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {events.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12">
+                  <TableCell colSpan={5} className="text-center py-12">
                     <Activity className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
                     <p className="text-lg font-medium text-muted-foreground">Sin eventos registrados</p>
                     <p className="text-sm text-muted-foreground/70">El sistema está monitoreando en tiempo real</p>
                   </TableCell>
                 </TableRow>
               ) : (
-                events.map((event) => (
-                  <TableRow key={event.id} className="border-border/30 hover:bg-card/50 transition-colors">
-                    <TableCell className="font-mono text-xs">
-                      {formatTime(event.created_at)}
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-mono text-xs bg-card-muted px-2 py-1 rounded">
-                        {event.device_id}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`text-xs font-medium ${getAlertTypeColor(event.alert_type)}`}>
-                        {getAlertTypeName(event.alert_type)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {getConfidenceBadge(event.confidence)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col items-center gap-1 font-mono text-[10px]">
-                        <div>
-                          <span className="text-muted-foreground">RMS:</span>{' '}
-                          <span className="text-primary font-semibold">{event.metadata?.rms?.toFixed(2) || 'N/A'}</span>
+                events.map((event) => {
+                  const alertDetails = getAlertTypeDetails(event.alert_type);
+                  const AlertIcon = alertDetails.icon;
+                  
+                  return (
+                    <TableRow key={event.id} className="border-border/30 hover:bg-card/50 transition-colors">
+                      <TableCell className="font-mono text-sm text-muted-foreground">
+                        {formatTime(event.created_at)}
+                      </TableCell>
+                      <TableCell>
+                        <div className={`flex items-center gap-3 px-4 py-2.5 rounded-md ${alertDetails.bgClass}`}>
+                          <AlertIcon className={`h-5 w-5 ${alertDetails.color} flex-shrink-0`} strokeWidth={2} />
+                          <span className={`text-sm font-medium ${alertDetails.color}`}>
+                            {alertDetails.name}
+                          </span>
                         </div>
-                        <div>
-                          <span className="text-muted-foreground">ZCR:</span>{' '}
-                          <span className="text-accent font-semibold">{event.metadata?.zcr?.toFixed(2) || 'N/A'}</span>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {getConfidenceBadge(event.confidence)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-center gap-6 font-mono text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="text-muted-foreground">RMS:</span>
+                            <span className="text-amber-500 font-bold text-sm">{event.metadata?.rms?.toFixed(2) || 'N/A'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-muted-foreground">ZCR:</span>
+                            <span className="text-emerald-500 font-bold text-sm">{event.metadata?.zcr?.toFixed(2) || 'N/A'}</span>
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {event.metadata?.audio_url ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleAudio(event.id)}
-                          className="h-8 px-3 text-xs"
-                        >
-                          {playingId === event.id ? (
-                            <>
-                              <Pause className="h-3 w-3 mr-1" />
-                              Pausar
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-3 w-3 mr-1" />
-                              Reproducir
-                            </>
-                          )}
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Sin audio</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-center">
+                          <span className="font-mono text-xs bg-muted px-3 py-1.5 rounded border border-border/50">
+                            {event.device_id}
+                          </span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

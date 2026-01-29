@@ -20,7 +20,8 @@ import {
   CheckCircle2,
   ExternalLink,
   Activity,
-  Building2
+  Building2,
+  UserPlus
 } from "lucide-react";
 import { Organization, SiteWithOrganization } from "@/lib/supabase";
 
@@ -36,9 +37,10 @@ interface HardwareFleetManagementProps {
   sites: SiteWithHardwareMetrics[];
   organizations: Organization[];
   onUpdate: () => void;
+  onInviteUser?: (organizationId: string) => void;
 }
 
-export function HardwareFleetManagement({ sites, organizations, onUpdate }: HardwareFleetManagementProps) {
+export function HardwareFleetManagement({ sites, organizations, onUpdate, onInviteUser }: HardwareFleetManagementProps) {
   const router = useRouter();
   
   const getPlanBadgeColor = (plan: string) => {
@@ -247,16 +249,30 @@ export function HardwareFleetManagement({ sites, organizations, onUpdate }: Hard
 
                       {/* Acciones */}
                       <TableCell className="text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-3 text-xs hover:bg-primary/10 hover:text-primary transition-colors"
-                          onClick={() => router.push(`/admin/sites/${site.id}`)}
-                          title="Ver inspección técnica del site"
-                        >
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          Inspeccionar
-                        </Button>
+                        <div className="flex items-center gap-2 justify-center">
+                          {onInviteUser && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 px-3 text-xs"
+                              onClick={() => onInviteUser(site.organization.id)}
+                              title="Invitar administrador a esta organización"
+                            >
+                              <UserPlus className="h-3 w-3 mr-1" />
+                              Invitar Admin
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-3 text-xs hover:bg-primary/10 hover:text-primary transition-colors"
+                            onClick={() => router.push(`/admin/sites/${site.id}`)}
+                            title="Ver inspección técnica del site"
+                          >
+                            <ExternalLink className="h-3 w-3 mr-1" />
+                            Inspeccionar
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );

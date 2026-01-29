@@ -1,21 +1,33 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Cliente de Supabase con service role (admin privileges)
-// IMPORTANTE: Solo usar en server-side
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!, // Service role key (server-only)
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
-
 export async function POST(request: NextRequest) {
   try {
+    // Verificar variables de entorno
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+      return NextResponse.json(
+        { error: 'Faltan variables de entorno de Supabase' },
+        { status: 500 }
+      );
+    }
+
+    // Cliente de Supabase con service role (admin privileges)
+    // Se crea DENTRO del handler para evitar errores durante build
+    const supabaseAdmin = createClient(
+      supabaseUrl,
+      serviceRoleKey,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
+
     // Verificar que el usuario actual es super_admin
     const authHeader = request.headers.get('authorization');
     if (!authHeader) {
@@ -24,8 +36,8 @@ export async function POST(request: NextRequest) {
 
     // Crear cliente regular con el token del usuario
     const supabaseClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      supabaseUrl,
+      anonKey,
       {
         global: {
           headers: {

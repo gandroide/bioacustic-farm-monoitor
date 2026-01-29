@@ -366,4 +366,181 @@ Built with passion for next-generation livestock intelligence.
 
 ---
 
+"Operaciones de Fábrica". ---> PASO IMPORTANTE PARA FUTURO PROXIMO
+
+📦 Protocolo de Alta de Hardware (Factory Provisioning)
+Cuándo ejecutar: Justo antes de empaquetar una Raspberry Pi/Sensor para enviársela a un cliente. Quién lo ejecuta: El equipo de operaciones o Super Admin.
+
+1. El Concepto
+El dispositivo debe nacer en la base de datos como "Huérfano" (sin dueño). Esto permite que el sistema lo reconozca como válido cuando el cliente intente registrarlo, pero no esté asignado a ninguna sala todavía.
+
+device_uid: Es el ID que imprimirás en la etiqueta adhesiva pegada a la caja (Ej: RPI-LOTE5-004).
+
+room_id: Se deja en NULL. Esto es la señal de que es "Stock Nuevo".
+
+status: Se pone en 'offline' porque está en una caja apagado.
+
+2. La Instrucción SQL (Para guardar)
+Copia y pega esto en tu gestor de notas o documentación interna:
+
+SQL
+-- 🏭 ALTA DE NUEVO STOCK (Provisionamiento)
+-- Ejecutar esto antes de enviar el equipo físico.
+
+INSERT INTO public.devices (
+    device_uid,
+    status,
+    room_id,      -- NULL = No tiene sala asignada (Huérfano)
+    is_active     -- TRUE = El dispositivo es válido para ser reclamado
+) 
+VALUES (
+    'ETIQUETA-DEL-DISPOSITIVO',  -- <--- CAMBIAR ESTO (Ej: 'RPI-055-JALISCO')
+    'offline',
+    NULL,
+    true
+);
+3. Verificación (Opcional)
+Para confirmar que el dispositivo está listo para ser reclamado, puedes consultar los dispositivos huérfanos:
+
+SQL
+-- Ver stock disponible (sin dueño)
+SELECT * FROM public.devices WHERE room_id IS NULL;
+💡 La Solución Definitiva (Para no usar SQL)
+Como fundador, no deberías depender de correr comandos SQL cada vez que vendes un sensor. Es propenso a errores humanos (te puedes olvidar de una comilla o del NULL).
+
+Te sugiero pedirle a tu Agente en el futuro que cree una pequeña pantalla en tu /admin llamada "Inventario de Hardware":
+
+Un input simple: UID del Nuevo Dispositivo.
+
+Un botón: [Registrar Stock].
+
+Por detrás, el sistema ejecuta exactamente el INSERT de arriba automáticamente.
+
+
+---
+
 *Last updated: January 27, 2026*
+
+DOCUMENTACION 
+
+# 🐷 Ontiveros Bio-Alert | IoT SaaS Platform
+
+**Versión:** 1.0.0 (Enterprise Architecture)
+**Stack:** Next.js + Supabase + Tailwind CSS + IoT Integration
+
+## 📖 Descripción del Proyecto
+
+Ontiveros Bio-Alert es una plataforma SaaS Multi-Tenant diseñada para el monitoreo bio-acústico en granjas porcinas. El sistema permite detectar enfermedades respiratorias mediante el análisis de audio en tiempo real, ofreciendo dashboards diferenciados para la gestión operativa (Granjeros) y la gestión de negocio/hardware (Super Admin).
+
+La arquitectura ha sido refactorizada para soportar desde pequeños productores hasta grandes corporaciones (como Plumrose) mediante una estructura jerárquica escalable.
+
+---
+
+## 🏗️ Arquitectura de Datos (The Hierarchy)
+
+El sistema ya no utiliza un modelo plano. Se basa en una estructura de "muñeca rusa" para permitir escalabilidad infinita:
+
+`Organization` ➤ `Site` ➤ `Building` ➤ `Room` ➤ `Device`
+
+1.  **Organization (Tenant):** La entidad legal/cliente que paga (ej: *Plumrose Corp*).
+2.  **Site (Sede):** Ubicación física geográfica (ej: *Granja Valencia*).
+3.  **Building (Nave):** Estructura física (ej: *Galpón Maternidad Norte*).
+4.  **Room (Sala):** Unidad mínima de producción.
+5.  **Device (Nodo IoT):** Hardware (Raspberry Pi + Micrófono) asignado a una Sala.
+
+---
+
+## 🔐 Roles y Seguridad (RLS)
+
+El sistema utiliza **Row Level Security (RLS)** de Supabase para aislar los datos.
+
+### Roles de Usuario (`profiles`)
+* **Super Admin:** Acceso total a todas las organizaciones, métricas financieras (MRR) y herramientas de depuración de hardware.
+* **Org Admin:** Dueño de la granja. Ve todos los sitios de su `organization_id`.
+* **Site Manager:** (Roadmap) Acceso restringido a un solo `site_id`.
+
+### Política de Seguridad Clave
+Ningún usuario puede ver datos que no coincidan con su `organization_id`.
+> *Nota:* Si insertas datos manualmente vía SQL, asegúrate de asignar el `organization_id` correcto o el dato será invisible para el usuario.
+
+---
+
+## 🖥️ Estructura del Frontend
+
+La aplicación está dividida en dos "mundos" totalmente separados:
+
+### 1. 🚜 Client Dashboard (`/dashboard`)
+* **Audiencia:** Granjeros, Veterinarios.
+* **Funciones:**
+    * Visualización de Alertas Bioacústicas.
+    * Mapas de Calor de ruido.
+    * **Self-Service:** Configuración de granja (`/dashboard/settings/farm`) para agregar naves/salas sin soporte técnico.
+
+### 2. 🛡️ Super Admin Dashboard (`/admin`)
+* **Audiencia:** CEO, Equipo Técnico de Ontiveros.
+* **Funciones:**
+    * **KPIs de Negocio:** MRR, Churn, Costos de Nube.
+    * **Drill-Down:** Navegación profunda por la jerarquía de los clientes.
+    * **IoT Simulator:** Herramienta de "Modo Dios" para pruebas.
+
+---
+
+## 🛠️ Herramientas de Desarrollo y Debugging
+
+### IoT Simulator (Solo Admin)
+Ubicado en la vista de detalle de un Site (`/admin/sites/[id]`). Permite simular el comportamiento del hardware sin tener dispositivos físicos conectados:
+* **Force Online:** Pone todos los dispositivos en verde y actualiza `last_heartbeat`.
+* **Kill Site:** Simula una caída masiva (todos a rojo/offline).
+* **Critical Failure:** Apaga aleatoriamente 2 dispositivos.
+
+> **⚠️ Importante:** El simulador modifica la base de datos real. Usar con precaución en producción.
+
+---
+
+## 🗄️ Esquema de Base de Datos (Core Tables)
+
+Si necesitas hacer consultas SQL manuales, estas son las tablas clave:
+
+| Tabla | Descripción | Clave Foránea Principal |
+| :--- | :--- | :--- |
+| `organizations` | Clientes pagadores | `id` |
+| `sites` | Granjas físicas | `organization_id` |
+| `buildings` | Naves/Galpones | `site_id` |
+| `rooms` | Salas interiores | `building_id` |
+| `devices` | Hardware IoT | `room_id` |
+| `events` | Alertas de audio (Tos) | `device_uid` |
+
+---
+
+## 🚑 Solución de Problemas Comunes (Troubleshooting)
+
+### Error: `42703 column "x" does not exist`
+* **Causa:** El código Frontend (React) espera una columna que no existe en la Base de Datos (ej: `is_active` o `updated_at`).
+* **Solución:** Ejecutar en Supabase SQL Editor:
+    ```sql
+    ALTER TABLE public.table_name ADD COLUMN column_name DATA_TYPE DEFAULT value;
+    ```
+
+### Error: `PGRST204` / `401 Unauthorized` al guardar
+* **Causa:** Intentas hacer un `UPDATE` o `INSERT` pero las políticas RLS solo permiten `SELECT`.
+* **Solución:** Crear una política de escritura en Supabase:
+    ```sql
+    CREATE POLICY "Permitir Update" ON public.tabla FOR UPDATE USING (true) WITH CHECK (true);
+    ```
+
+### Error de Hidratación: `<p> cannot be a descendant of <p>`
+* **Causa:** Uso incorrecto de componentes UI. `DialogDescription` de Shadcn ya es un párrafo (`p`), no se debe meter otro `p` o `div` dentro.
+* **Solución:** Cambiar las etiquetas internas por `<span>`.
+
+---
+
+## 🚀 Instalación y Despliegue
+
+1.  **Clonar repositorio:** `git clone ...`
+2.  **Variables de Entorno:** Configurar `.env.local` con `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+3.  **Instalar dependencias:** `npm install`
+4.  **Correr servidor dev:** `npm run dev`
+
+---
+
+*Documentación generada para Ontiveros Bio-Alert © 2026*

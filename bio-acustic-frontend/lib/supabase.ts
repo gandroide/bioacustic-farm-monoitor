@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 // MODIFICACIÓN: Añadimos un fallback (|| '') para evitar que el build falle 
 // si las variables no están disponibles en el momento de la compilación.
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key'
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 

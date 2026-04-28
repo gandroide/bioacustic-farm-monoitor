@@ -1,7 +1,40 @@
-venv/
-grabaciones/
-__pycache__/
-.DS_Store
-.env
-*.pyc
+# =============================================================================
+# Monorepo: Granja — BIO-ALERT System
+# =============================================================================
 
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Secretos ──
+.env
+.env.local
+.env.*.local
+
+# ── Python (Legacy — ya eliminado, pero por seguridad) ──
+venv/
+__pycache__/
+*.pyc
+*.pyo
+grabaciones/
+
+# ── Node.js / Frontend ──
+node_modules/
+.next/
+out/
+.vercel
+
+# ── PlatformIO / Firmware ──
+.pio/
+compile_commands.json
+
+# ── IDEs ──
+.vscode/
+.cursor/
+.idea/
+
+# ── Build artifacts ──
+*.o
+*.elf
+*.bin
+*.map

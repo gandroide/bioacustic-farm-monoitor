@@ -1,7 +1,13 @@
 # Plan de Proyecto: Sistema de Bioacústica y Alerta Temprana para Granjas Porcinas
 
 **Versión:** 1.0
-**Estado:** Planificación
+**Estado:** ~~Planificación~~ → **SUPERADO (v1 — Archivo Histórico)**
+
+> ⚠️ **NOTA (Abril 2026):** Este documento refleja la planificación original basada en
+> **Raspberry Pi + Python + TensorFlow Lite**. El proyecto migró a **ESP32-S3 + C++ + PlatformIO**
+> con procesamiento DSP directo (FFT/RMS) en lugar de un modelo ML.
+>
+> **Para la arquitectura actual, consulta [`/CONTEXT.MD`](/CONTEXT.MD).**
 **Objetivo Principal:** Detección en tiempo real de estrés porcino (aplastamiento/dolor) mediante IA en el borde (Edge Computing) para reducir la mortalidad de lechones.
 
 ---

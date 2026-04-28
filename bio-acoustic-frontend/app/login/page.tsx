@@ -71,10 +71,11 @@ export default function LoginPage() {
           
           <div className="text-center space-y-2">
             <CardTitle className="text-3xl font-bold tracking-tight">
-              Ontiveros Bio-Alert
+              Brivex Bio-Alert
             </CardTitle>
-            <CardDescription className="text-base">
-              Sistema de Monitoreo Bioacústico
+            <CardDescription className="text-base flex flex-col gap-1">
+              <span>Sistema de Monitoreo Bioacústico</span>
+              <span className="text-xs text-muted-foreground/60 font-mono tracking-wider">by INTEGRAL SERVICES OIF</span>
             </CardDescription>
           </div>
         </CardHeader>
@@ -88,7 +89,7 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="admin@ontiveros.com"
+                  placeholder="admin@brivex.com"
                   className="pl-10 bg-secondary/30 border-border/50 focus:border-primary/50 transition-all h-11"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}

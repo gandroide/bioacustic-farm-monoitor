@@ -1,16 +1,16 @@
 // =============================================================================
-// BIO-ALERT — Sistema de Monitoreo Bioacústico Autónomo
-// Fase: Recolección de Datos para Entrenamiento de IA
+// BRIVEX BIO-ALERT — Recolector Inteligente de Datos Acústicos
+// Fase: Dataset Builder para Edge AI / Machine Learning
 // Plataforma: ESP32-S3 | Framework: Arduino + FreeRTOS | PlatformIO
 // =============================================================================
 //
 // Arquitectura de Doble Núcleo:
-//   Core 0 → Captura I2S ininterrumpida → Ring Buffer
-//   Core 1 → Análisis (RMS + FFT + Baseline) → Grabación WAV + CSV
+//   Core 0 → Captura I2S ininterrumpida → Ring Buffer (2s pre-roll)
+//   Core 1 → Análisis (RMS + FFT metadata) → Grabación WAV 5s
 //
-// Trigger permisivo:
-//   RMS > baseline × factor  AND  1000 Hz < freqDom < 4000 Hz
-//   sostenido ≥ 500 ms  →  Graba 10 s de audio (.wav) + metadatos (.csv)
+// Modos de grabación:
+//   1. REC (Alerta):  RMS > THRESHOLD_RMS → REC_[uptime]_RMS[val].wav
+//   2. ENV (Ambiente): Cada 30 min automático → ENV_[uptime]_RMS[val].wav
 //
 // =============================================================================
 
@@ -72,32 +72,41 @@ static const uint32_t SAMPLE_RATE = 16000; // Hz
 static const uint16_t BITS_PER_SAMPLE = 16;
 static const uint8_t NUM_CHANNELS = 1; // Mono
 
-// FFT
-static const uint16_t FFT_SAMPLES = 1024; // Debe ser potencia de 2
-
 // Ring Buffer: ~2 segundos de audio = 32000 muestras × 2 bytes = 64 KB
 static const size_t RING_BUF_SAMPLES = 32000;
+static const size_t PREROLL_SAMPLES = RING_BUF_SAMPLES; // 2s de pre-roll
 
 // I2S DMA read block size (muestras por lectura)
 static const size_t I2S_READ_SAMPLES = 512;
 
-// --- Umbrales del Disparador (sensibilidad alta para pruebas) ---
-// RMS_FACTOR ahora es mutable: el Smart Button alterna entre dos valores.
-static const float RMS_FACTOR_SENSITIVE = 1.5f; // Sensible: 50% sobre fondo
-static const float RMS_FACTOR_STRICT = 2.5f;    // Estricto: 150% sobre fondo
-static volatile float RMS_FACTOR = RMS_FACTOR_SENSITIVE; // Valor activo
-static const float FREQ_MIN_HZ = 500.0f;     // Frecuencia dominante mínima
-static const float FREQ_MAX_HZ = 5000.0f;    // Frecuencia dominante máxima
-static const uint32_t TRIGGER_HOLD_MS = 100; // Disparo casi instantáneo (ms)
+// FFT (para metadatos del dataset, NO como trigger)
+static const uint16_t FFT_SAMPLES = 1024; // Debe ser potencia de 2
 
-// Baseline rodante: suavizado exponencial (alpha bajo = más lento)
+// Bloque de análisis RMS + FFT
+static const uint16_t RMS_BLOCK_SAMPLES = FFT_SAMPLES; // Mismo tamaño para reusar buffer
+
+// --- Umbral RMS para trigger de alerta ---
+static const float THRESHOLD_RMS = 500.0f; // Ajustar según ambiente real
+// RMS_FACTOR: Smart Button alterna entre dos multiplicadores sobre baseline
+static const float RMS_FACTOR_SENSITIVE = 1.5f;
+static const float RMS_FACTOR_STRICT = 2.5f;
+static volatile float RMS_FACTOR = RMS_FACTOR_SENSITIVE;
+
+// Baseline rodante: suavizado exponencial
 static const float BASELINE_ALPHA = 0.02f;
 
-// --- Grabación ---
-static const uint32_t RECORD_SECONDS = 10;
+// --- Grabación: 5 segundos total (2s pre-roll + 3s live) ---
+static const uint32_t RECORD_TOTAL_SECONDS = 5;
+static const uint32_t PREROLL_SECONDS = 2;
+static const uint32_t LIVE_SECONDS = 3;
 static const uint32_t RECORD_BYTES =
-    SAMPLE_RATE * (BITS_PER_SAMPLE / 8) * NUM_CHANNELS * RECORD_SECONDS;
-static const size_t SD_WRITE_BUF = 4096; // Bytes por escritura a SD (4 KB)
+    SAMPLE_RATE * (BITS_PER_SAMPLE / 8) * NUM_CHANNELS * RECORD_TOTAL_SECONDS;
+static const uint32_t LIVE_BYTES =
+    SAMPLE_RATE * (BITS_PER_SAMPLE / 8) * NUM_CHANNELS * LIVE_SECONDS;
+static const size_t SD_WRITE_BUF = 4096; // 4 KB por escritura a SD
+
+// --- Muestreo Ambiental Periódico ---
+static const uint32_t ENV_INTERVAL_MS = 1800000; // 30 minutos en ms
 
 // --- LEDs ---
 static const uint8_t LED_BRILLO = 127; // PWM 50%
@@ -146,13 +155,16 @@ static float lastPeakRMS = 0.0f;
 static float lastFreqHz = 0.0f;
 static float lastBaseline = 0.0f;
 
+// Timer para muestreo ambiental periódico (millis-based, non-blocking)
+static uint32_t lastEnvCaptureMs = 0;
+
 // Handle de tareas
 static TaskHandle_t captureTaskHandle = NULL;
 static TaskHandle_t analysisTaskHandle = NULL;
 static TaskHandle_t ledTaskHandle = NULL;
 static TaskHandle_t buttonTaskHandle = NULL;
 
-// Buffers de FFT (estáticos en Core 1)
+// Buffers de FFT (metadatos para dataset ML)
 static float vReal[FFT_SAMPLES];
 static float vImag[FFT_SAMPLES];
 
@@ -206,6 +218,24 @@ static size_t rb_read(int16_t *dest, size_t count) {
   }
   xSemaphoreGive(rbMutex);
   return toRead;
+}
+
+/**
+ * @brief Copia las muestras actuales del ring buffer sin avanzar el read index.
+ *        Usado para volcar el pre-roll de 2s al archivo WAV.
+ *        Devuelve cuántas muestras copió (hasta RING_BUF_SAMPLES).
+ */
+static size_t rb_snapshot(int16_t *dest, size_t maxSamples) {
+  xSemaphoreTake(rbMutex, portMAX_DELAY);
+  size_t avail = rb_available();
+  size_t toCopy = (maxSamples < avail) ? maxSamples : avail;
+  size_t idx = rbReadIdx;
+  for (size_t i = 0; i < toCopy; i++) {
+    dest[i] = ringBuffer[idx];
+    idx = (idx + 1) % RING_BUF_SAMPLES;
+  }
+  xSemaphoreGive(rbMutex);
+  return toCopy;
 }
 
 // =============================================================================
@@ -324,113 +354,145 @@ static String getMACAddress() {
 // =============================================================================
 
 /**
- * @brief Escribe la cabecera WAV (44 bytes) al inicio del archivo.
- *        PCM 16-bit, mono, 16 kHz.
+ * @brief Genera nombre de archivo dinámico según tipo de grabación.
+ * @param dest Buffer destino para el nombre
+ * @param isEnv true = captura ambiental, false = alerta RMS
+ * @param rmsValue Valor RMS actual para incluir en el nombre
  */
-static void writeWavHeader(File &file, uint32_t dataBytes) {
-  uint32_t fileSize = 36 + dataBytes;
-  uint32_t byteRate = SAMPLE_RATE * NUM_CHANNELS * (BITS_PER_SAMPLE / 8);
-  uint16_t blockAlign = NUM_CHANNELS * (BITS_PER_SAMPLE / 8);
-
-  // RIFF chunk
-  file.write((const uint8_t *)"RIFF", 4);
-  file.write((const uint8_t *)&fileSize, 4);
-  file.write((const uint8_t *)"WAVE", 4);
-
-  // fmt sub-chunk
-  file.write((const uint8_t *)"fmt ", 4);
-  uint32_t fmtSize = 16;
-  file.write((const uint8_t *)&fmtSize, 4);
-  uint16_t audioFormat = 1; // PCM
-  file.write((const uint8_t *)&audioFormat, 2);
-  uint16_t numCh = NUM_CHANNELS;
-  file.write((const uint8_t *)&numCh, 2);
-  uint32_t sr = SAMPLE_RATE;
-  file.write((const uint8_t *)&sr, 4);
-  file.write((const uint8_t *)&byteRate, 4);
-  file.write((const uint8_t *)&blockAlign, 2);
-  uint16_t bps = BITS_PER_SAMPLE;
-  file.write((const uint8_t *)&bps, 2);
-
-  // data sub-chunk
-  file.write((const uint8_t *)"data", 4);
-  file.write((const uint8_t *)&dataBytes, 4);
+static void buildFilename(char *dest, size_t destLen, bool isEnv, float rmsValue) {
+  uint32_t uptimeSec = millis() / 1000;
+  // Formatear RMS con 1 decimal, reemplazando '.' por '-' para compatibilidad FAT32
+  int rmsInt = (int)rmsValue;
+  int rmsDec = (int)((rmsValue - rmsInt) * 10);
+  if (rmsDec < 0) rmsDec = -rmsDec;
+  if (isEnv) {
+    snprintf(dest, destLen, "/ENV_%lu_RMS%d-%d.wav",
+             (unsigned long)uptimeSec, rmsInt, rmsDec);
+  } else {
+    snprintf(dest, destLen, "/REC_%lu_RMS%d-%d.wav",
+             (unsigned long)uptimeSec, rmsInt, rmsDec);
+  }
 }
 
 /**
- * @brief Graba 10 segundos de audio del I2S directamente a un archivo .wav en
- * la SD.
- *
- * NOTA DE DISEÑO: Durante la grabación, leemos directamente del I2S (bypass
- * del ring buffer). Esto garantiza que no perdemos muestras y que el Core 1
- * tiene control total del flujo de escritura a la SD sin competir con el
- * ring buffer. El Core 0 sigue llenando el ring buffer, pero el Core 1 no
- * lo consume durante estos 10 segundos. Al terminar, el ring buffer se
- * resetea para evitar procesar datos obsoletos.
+ * @brief Graba 5 segundos de audio: 2s pre-roll del Ring Buffer + 3s live I2S.
+ *        Escribe en chunks para evitar perder muestras.
+ * @param isEnv true si es captura ambiental periódica
+ * @param currentRMS Valor RMS actual para el nombre del archivo
+ * @return true si la grabación fue exitosa
  */
-static bool recordWavToSD() {
+static bool recordWavToSD(bool isEnv, float currentRMS) {
 #if USE_SD_CARD
   eventCounter++;
 
-  // Generar nombre de archivo: /alerta_001.wav
-  char filename[32];
-  snprintf(filename, sizeof(filename), "/alerta_%03lu.wav",
-           (unsigned long)eventCounter);
+  // Generar nombre dinámico
+  char filename[48];
+  buildFilename(filename, sizeof(filename), isEnv, currentRMS);
 
-  Serial.printf("[REC] Iniciando grabación: %s (%u s)...\n", filename,
-                RECORD_SECONDS);
+  Serial.printf("[REC] Iniciando: %s (%s, %us)...\n", filename,
+                isEnv ? "ENV" : "ALERTA", RECORD_TOTAL_SECONDS);
 
   File wavFile = SD.open(filename, FILE_WRITE);
   if (!wavFile) {
     Serial.printf("[ERROR] No se pudo crear %s\n", filename);
-    eventCounter--; // Revertir contador
+    eventCounter--;
     return false;
   }
 
-  // Escribir cabecera WAV (se calculan los 320000 bytes de data)
+  // Escribir cabecera WAV
   writeWavHeader(wavFile, RECORD_BYTES);
 
-  // Buffer temporal para lectura I2S → escritura SD
-  // Usamos SD_WRITE_BUF / 2 muestras (cada muestra = 2 bytes)
-  int16_t sdBuf[SD_WRITE_BUF / sizeof(int16_t)];
   uint32_t totalBytesWritten = 0;
-  size_t bytesRead = 0;
 
-  while (totalBytesWritten < RECORD_BYTES) {
-    size_t bytesToRead = SD_WRITE_BUF;
-    // No leer más de lo necesario en el último bloque
-    if (totalBytesWritten + bytesToRead > RECORD_BYTES) {
-      bytesToRead = RECORD_BYTES - totalBytesWritten;
+  // === FASE 1: Volcar 2s de pre-roll desde el Ring Buffer ===
+  // Leemos en chunks de SD_WRITE_BUF/2 muestras para no saturar la SD
+  const size_t chunkSamples = SD_WRITE_BUF / sizeof(int16_t); // 2048 muestras
+  int16_t sdBuf[SD_WRITE_BUF / sizeof(int16_t)];
+
+  // Copiar snapshot del ring buffer (no-destructivo, Core 0 sigue escribiendo)
+  // Procesamos directamente desde el ring buffer en chunks
+  size_t prerollRemaining = PREROLL_SAMPLES;
+  size_t prerollOffset = 0;
+
+  // Tomar snapshot de la posición actual del ring buffer
+  xSemaphoreTake(rbMutex, portMAX_DELAY);
+  size_t snapAvail = rb_available();
+  size_t snapStart = rbReadIdx;
+  // Avanzar read index para "consumir" el pre-roll
+  rbReadIdx = rbWriteIdx;
+  xSemaphoreGive(rbMutex);
+
+  size_t samplesToWrite = (snapAvail < PREROLL_SAMPLES) ? snapAvail : PREROLL_SAMPLES;
+  size_t snapIdx = snapStart;
+
+  while (prerollOffset < samplesToWrite) {
+    size_t thisChunk = chunkSamples;
+    if (prerollOffset + thisChunk > samplesToWrite)
+      thisChunk = samplesToWrite - prerollOffset;
+
+    // Copiar desde ring buffer (sin mutex, datos ya "consumidos")
+    for (size_t i = 0; i < thisChunk; i++) {
+      sdBuf[i] = ringBuffer[(snapStart + prerollOffset + i) % RING_BUF_SAMPLES];
     }
 
-    esp_err_t err =
-        i2s_read(I2S_PORT, sdBuf, bytesToRead, &bytesRead, pdMS_TO_TICKS(1000));
+    size_t bytesToWrite = thisChunk * sizeof(int16_t);
+    size_t written = wavFile.write((const uint8_t *)sdBuf, bytesToWrite);
+    totalBytesWritten += written;
+    prerollOffset += thisChunk;
+
+    if (written != bytesToWrite) {
+      Serial.println("[ERROR] Escritura incompleta (pre-roll).");
+      break;
+    }
+  }
+
+  Serial.printf("[REC] Pre-roll: %lu bytes escritos\n",
+                (unsigned long)totalBytesWritten);
+
+  // === FASE 2: Grabar 3s en tiempo real desde I2S ===
+  size_t bytesRead = 0;
+  uint32_t liveBytesTarget = LIVE_BYTES;
+  // Ajustar si el pre-roll fue menor de lo esperado
+  uint32_t actualPrerollBytes = totalBytesWritten;
+  liveBytesTarget = RECORD_BYTES - actualPrerollBytes;
+
+  uint32_t liveWritten = 0;
+  while (liveWritten < liveBytesTarget) {
+    size_t bytesToRead = SD_WRITE_BUF;
+    if (liveWritten + bytesToRead > liveBytesTarget)
+      bytesToRead = liveBytesTarget - liveWritten;
+
+    esp_err_t err = i2s_read(I2S_PORT, sdBuf, bytesToRead,
+                             &bytesRead, pdMS_TO_TICKS(1000));
     if (err != ESP_OK || bytesRead == 0) {
-      Serial.println("[ERROR] Fallo de lectura I2S durante grabación.");
+      Serial.println("[ERROR] Fallo I2S durante grabación live.");
       break;
     }
 
     size_t written = wavFile.write((const uint8_t *)sdBuf, bytesRead);
     if (written != bytesRead) {
-      Serial.println("[ERROR] Escritura incompleta a SD.");
+      Serial.println("[ERROR] Escritura incompleta (live).");
       break;
     }
+    liveWritten += written;
     totalBytesWritten += written;
   }
 
   wavFile.close();
-  Serial.printf("[REC] Grabación completada: %s (%lu bytes)\n", filename,
+  Serial.printf("[REC] Completado: %s (%lu bytes total)\n", filename,
                 (unsigned long)totalBytesWritten);
 
   return (totalBytesWritten >= RECORD_BYTES);
 #else
   // --- MOCK: Simular grabación sin hardware SD ---
   eventCounter++;
-  Serial.printf("[MOCK] Simulando grabación de %u segundos (evento #%lu)...\n",
-                RECORD_SECONDS, (unsigned long)eventCounter);
-  vTaskDelay(pdMS_TO_TICKS(10000)); // Retener STATE_RECORDING → LED amarillo
-  Serial.printf("[MOCK] Grabación simulada completada (evento #%lu).\n",
-                (unsigned long)eventCounter);
+  char filename[48];
+  buildFilename(filename, sizeof(filename), isEnv, currentRMS);
+  Serial.printf("[MOCK] Simulando %s (%s, %us)...\n", filename,
+                isEnv ? "ENV" : "ALERTA", RECORD_TOTAL_SECONDS);
+  // Simular el tiempo de grabación (5s)
+  vTaskDelay(pdMS_TO_TICKS(5000));
+  Serial.printf("[MOCK] Grabación simulada completada: %s\n", filename);
   return true;
 #endif
 }
@@ -441,9 +503,8 @@ static bool recordWavToSD() {
 
 /**
  * @brief Escribe una línea de metadatos en /log_eventos.csv (append).
- *        Crea el archivo con cabecera si no existe.
  */
-static void writeEventCSV() {
+static void writeEventCSV(const char *wavFilename, bool isEnv) {
 #if USE_SD_CARD
   const char *csvPath = "/log_eventos.csv";
   bool fileExists = SD.exists(csvPath);
@@ -454,32 +515,22 @@ static void writeEventCSV() {
     return;
   }
 
-  // Escribir cabecera si es archivo nuevo
   if (!fileExists) {
-    csvFile.println("Nombre_Archivo,MAC_Address,Uptime_ms,Num_Evento,Ruido_"
-                    "Fondo_RMS,Pico_RMS_Evento,Frecuencia_Hz,Temp_Core_C");
+    csvFile.println("Archivo,Tipo,MAC,Uptime_ms,Evento,Baseline_RMS,Pico_RMS,Freq_Dom_Hz,Temp_C");
   }
 
-  // Construir nombre del archivo asociado
-  char filename[32];
-  snprintf(filename, sizeof(filename), "alerta_%03lu.wav",
-           (unsigned long)eventCounter);
-
-  // Obtener datos del sistema
   String mac = getMACAddress();
   unsigned long uptime = millis();
-  float tempC = temperatureRead(); // Sensor de temperatura interno del silicio
+  float tempC = temperatureRead();
 
-  // Escribir fila de datos
-  csvFile.printf("%s,%s,%lu,%lu,%.1f,%.1f,%.1f,%.1f\n", filename, mac.c_str(),
-                 uptime, (unsigned long)eventCounter, lastBaseline, lastPeakRMS,
-                 lastFreqHz, tempC);
+  csvFile.printf("%s,%s,%s,%lu,%lu,%.1f,%.1f,%.1f,%.1f\n",
+                 wavFilename, isEnv ? "ENV" : "REC", mac.c_str(),
+                 uptime, (unsigned long)eventCounter, lastBaseline,
+                 lastPeakRMS, lastFreqHz, tempC);
 
   csvFile.close();
-  Serial.printf("[CSV] Evento #%lu registrado en log_eventos.csv\n",
-                (unsigned long)eventCounter);
+  Serial.printf("[CSV] Evento #%lu registrado\n", (unsigned long)eventCounter);
 #else
-  // MOCK: Sin SD, no escribir CSV
   Serial.printf("[MOCK] CSV omitido (evento #%lu, SD deshabilitada).\n",
                 (unsigned long)eventCounter);
 #endif
@@ -516,74 +567,69 @@ static void audioCaptureTask(void *param) {
 }
 
 // =============================================================================
-// TAREA: ANÁLISIS + GRABACIÓN (Core 1) — Prioridad Media
+// TAREA: ANÁLISIS RMS + GRABACIÓN (Core 1) — Prioridad Media
 // =============================================================================
 //
-// Extrae bloques de FFT_SAMPLES del ring buffer. Calcula:
+// Extrae bloques de RMS_BLOCK_SAMPLES del ring buffer. Calcula:
 //   1. RMS del bloque
 //   2. Baseline rodante (media exponencial)
-//   3. FFT → frecuencia dominante
 //
-// Si las condiciones del trigger se cumplen durante >= TRIGGER_HOLD_MS:
-//   → Cambia estado a STATE_RECORDING
-//   → Graba WAV de 10 s directamente del I2S
-//   → Escribe metadatos CSV
-//   → Resetea ring buffer y vuelve a STATE_MONITORING
+// Disparadores:
+//   A) RMS > THRESHOLD_RMS (y > baseline * RMS_FACTOR) → Grabación REC
+//   B) Timer ENV cada 30 min (millis-based) → Grabación ENV
 //
-// Stack: 16384 bytes (FFT + buffers locales necesitan espacio).
+// Grabación: 2s pre-roll + 3s live = 5s total WAV
+// Stack: 8192 bytes (sin FFT, necesita menos)
 // =============================================================================
 
 static void audioAnalysisTask(void *param) {
-  int16_t analysisBuf[FFT_SAMPLES];
-  uint32_t triggerStartMs = 0;
-  bool triggerActive = false;
+  int16_t analysisBuf[RMS_BLOCK_SAMPLES];
 
-  Serial.println("[Core 1] Tarea de análisis + grabación iniciada.");
+  Serial.println("[Core 1] Tarea de análisis RMS + grabación iniciada.");
+
+  // Inicializar timer ambiental
+  lastEnvCaptureMs = millis();
 
   for (;;) {
-    // Esperar a tener suficientes muestras en el ring buffer
-    if (rb_available() < FFT_SAMPLES) {
+    // Esperar a tener suficientes muestras
+    if (rb_available() < RMS_BLOCK_SAMPLES) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
 
-    // Extraer bloque del ring buffer
-    size_t got = rb_read(analysisBuf, FFT_SAMPLES);
-    if (got < FFT_SAMPLES) {
+    // Extraer bloque del ring buffer (no-destructivo para pre-roll)
+    // Usamos rb_read que avanza el read index
+    size_t got = rb_read(analysisBuf, RMS_BLOCK_SAMPLES);
+    if (got < RMS_BLOCK_SAMPLES) {
       vTaskDelay(pdMS_TO_TICKS(5));
       continue;
     }
 
     // === 1. Calcular RMS ===
     int64_t sumSq = 0;
-    for (int i = 0; i < FFT_SAMPLES; i++) {
+    for (int i = 0; i < RMS_BLOCK_SAMPLES; i++) {
       int32_t s = (int32_t)analysisBuf[i];
       sumSq += s * s;
     }
-    float rms = sqrtf((float)sumSq / FFT_SAMPLES);
+    float rms = sqrtf((float)sumSq / RMS_BLOCK_SAMPLES);
 
     // === 2. Actualizar Baseline rodante ===
     if (!baselineInitialized) {
       rmsBaseline = rms;
       baselineInitialized = true;
     } else {
-      // Media exponencial: baseline = alpha * rms + (1 - alpha) * baseline
-      rmsBaseline =
-          BASELINE_ALPHA * rms + (1.0f - BASELINE_ALPHA) * rmsBaseline;
+      rmsBaseline = BASELINE_ALPHA * rms + (1.0f - BASELINE_ALPHA) * rmsBaseline;
     }
 
-    // === 3. FFT → Frecuencia Dominante ===
-    // Copiar muestras a los arrays de FFT (float)
-    for (int i = 0; i < FFT_SAMPLES; i++) {
+    // === 3. FFT → Frecuencia Dominante (metadatos para ML, NO trigger) ===
+    for (int i = 0; i < RMS_BLOCK_SAMPLES; i++) {
       vReal[i] = (float)analysisBuf[i];
       vImag[i] = 0.0f;
     }
-
     FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);
     FFT.compute(FFTDirection::Forward);
     FFT.complexToMagnitude();
 
-    // Buscar el bin con mayor magnitud (ignorar bin 0 = DC offset)
     float maxMag = 0.0f;
     uint16_t maxBin = 1;
     for (uint16_t i = 1; i < (FFT_SAMPLES / 2); i++) {
@@ -592,108 +638,88 @@ static void audioAnalysisTask(void *param) {
         maxBin = i;
       }
     }
-    float freqDominant =
-        (float)maxBin * (float)SAMPLE_RATE / (float)FFT_SAMPLES;
+    float freqDominant = (float)maxBin * (float)SAMPLE_RATE / (float)FFT_SAMPLES;
+    lastFreqHz = freqDominant;
 
-    // === 4. Telemetría periódica (cada ~500 ms, basado en bloques procesados)
-    // === Con 16000 Hz y bloques de 1024, procesamos ~15.6 bloques/s.
-    // Imprimimos cada 8 bloques ≈ cada ~512 ms.
+    // === 4. Telemetría periódica (~500ms) ===
     static uint8_t printCounter = 0;
     printCounter++;
     if (printCounter >= 8) {
       printCounter = 0;
-      Serial.printf("RMS: %.0f | Base: %.0f | Freq: %.0f Hz | Estado: %s\n",
-                    rms, rmsBaseline, freqDominant,
+      float threshold = rmsBaseline * RMS_FACTOR;
+      if (threshold < THRESHOLD_RMS) threshold = THRESHOLD_RMS;
+      uint32_t nextEnvSec = (ENV_INTERVAL_MS - (millis() - lastEnvCaptureMs)) / 1000;
+      Serial.printf("RMS: %.0f | Base: %.0f | Freq: %.0f Hz | Thr: %.0f | NextENV: %lus | %s\n",
+                    rms, rmsBaseline, freqDominant, threshold, (unsigned long)nextEnvSec,
                     (systemState == STATE_MONITORING)  ? "MONITOR"
                     : (systemState == STATE_RECORDING) ? "REC"
                     : (systemState == STATE_ERROR)     ? "ERROR"
                                                        : "PAIRING");
     }
 
-    // === 5. Lógica del Disparador ===
-    // No disparar si estamos grabando, en error o en pairing
+    // No disparar si no estamos monitoreando
     if (systemState != STATE_MONITORING) {
-      triggerActive = false;
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
 
-    // Umbral dinámico: RMS debe superar la baseline por un factor
+    // === 5. Trigger por RMS (Alerta) — FFT NO participa en el trigger ===
     float threshold = rmsBaseline * RMS_FACTOR;
-    // Mínimo absoluto para evitar disparos con baseline muy baja (silencio
-    // total)
-    if (threshold < 200.0f)
-      threshold = 200.0f;
+    if (threshold < THRESHOLD_RMS) threshold = THRESHOLD_RMS;
 
-    bool conditionMet = (rms > threshold) && (freqDominant >= FREQ_MIN_HZ) &&
-                        (freqDominant <= FREQ_MAX_HZ);
+    bool rmsTriggered = (rms > threshold);
 
-    if (conditionMet) {
-      if (!triggerActive) {
-        // Inicio de condición sostenida
-        triggerActive = true;
-        triggerStartMs = millis();
-      } else if ((millis() - triggerStartMs) >= TRIGGER_HOLD_MS) {
-        // ¡DISPARO! Condición sostenida por >= 500 ms
+    // === 6. Timer ENV (Muestreo Ambiental cada 30 min) ===
+    bool envTriggered = ((millis() - lastEnvCaptureMs) >= ENV_INTERVAL_MS);
+
+    // === 7. Ejecutar grabación si alguno dispara ===
+    if (rmsTriggered || envTriggered) {
+      bool isEnv = envTriggered && !rmsTriggered;
+
+      if (isEnv) {
         Serial.println("============================================");
-        Serial.printf(">>> TRIGGER ACTIVADO | RMS=%.0f Thr=%.0f Freq=%.0f Hz\n",
-                      rms, threshold, freqDominant);
+        Serial.printf(">>> ENV TIMER | Captura ambiental (RMS=%.0f)\n", rms);
         Serial.println("============================================");
-
-        // Guardar datos del evento para el CSV
-        lastPeakRMS = rms;
-        lastFreqHz = freqDominant;
-        lastBaseline = rmsBaseline;
-
-        // Cambiar estado visual
-        systemState = STATE_RECORDING;
-
-        // Grabar WAV
-        bool ok = recordWavToSD();
-
-        if (ok) {
-          // --- Grabación exitosa: escribir CSV y volver a monitoreo ---
-          writeEventCSV();
-
-          // Resetear ring buffer (datos obsoletos post-grabación)
-          xSemaphoreTake(rbMutex, portMAX_DELAY);
-          rbWriteIdx = 0;
-          rbReadIdx = 0;
-          xSemaphoreGive(rbMutex);
-
-          systemState = STATE_MONITORING;
-          triggerActive = false;
-          Serial.println("[OK] Volviendo a modo MONITOREO.\n");
-
-        } else {
-          // --- Grabación FALLÓ: feedback visual de error en campo ---
-          Serial.println("============================================");
-          Serial.println("[ERROR] recordWavToSD() FALLÓ.");
-          Serial.println("        Causa probable: SD no montada o extraída.");
-          Serial.println("        LED ROJO activo por 5 segundos...");
-          Serial.println("============================================");
-
-          systemState = STATE_ERROR; // LED rojo parpadeo rápido (ledTask)
-
-          // Mantener estado de error visible para el operador en campo
-          vTaskDelay(pdMS_TO_TICKS(5000));
-
-          // Resetear ring buffer (datos acumulados durante el error)
-          xSemaphoreTake(rbMutex, portMAX_DELAY);
-          rbWriteIdx = 0;
-          rbReadIdx = 0;
-          xSemaphoreGive(rbMutex);
-
-          // Intentar recuperación automática
-          systemState = STATE_MONITORING;
-          triggerActive = false;
-          Serial.println(
-              "[RECOVERY] Recuperación automática. Volviendo a MONITOREO.\n");
-        }
+        lastEnvCaptureMs = millis(); // Reset timer
+      } else {
+        Serial.println("============================================");
+        Serial.printf(">>> TRIGGER RMS | RMS=%.0f Thr=%.0f\n", rms, threshold);
+        Serial.println("============================================");
       }
-    } else {
-      // Condición rota, resetear timer
-      triggerActive = false;
+
+      lastPeakRMS = rms;
+      lastBaseline = rmsBaseline;
+      systemState = STATE_RECORDING;
+
+      bool ok = recordWavToSD(isEnv, rms);
+
+      if (ok) {
+        // Generar nombre para CSV
+        char csvFilename[48];
+        buildFilename(csvFilename, sizeof(csvFilename), isEnv, rms);
+        writeEventCSV(csvFilename, isEnv);
+
+        // Resetear ring buffer post-grabación
+        xSemaphoreTake(rbMutex, portMAX_DELAY);
+        rbWriteIdx = 0;
+        rbReadIdx = 0;
+        xSemaphoreGive(rbMutex);
+
+        systemState = STATE_MONITORING;
+        Serial.println("[OK] Volviendo a modo MONITOREO.\n");
+      } else {
+        Serial.println("[ERROR] Grabación falló. LED ROJO 5s...");
+        systemState = STATE_ERROR;
+        vTaskDelay(pdMS_TO_TICKS(5000));
+
+        xSemaphoreTake(rbMutex, portMAX_DELAY);
+        rbWriteIdx = 0;
+        rbReadIdx = 0;
+        xSemaphoreGive(rbMutex);
+
+        systemState = STATE_MONITORING;
+        Serial.println("[RECOVERY] Volviendo a MONITOREO.\n");
+      }
     }
   }
 }
@@ -960,8 +986,8 @@ void setup() {
 
   Serial.println();
   Serial.println("=============================================");
-  Serial.println("  BIO-ALERT | Recolección de Datos v1.0");
-  Serial.println("  ESP32-S3 | FreeRTOS Dual-Core");
+  Serial.println("  BRIVEX BIO-ALERT | Dataset Builder v2.0");
+  Serial.println("  ESP32-S3 | FreeRTOS Dual-Core | Pre-Roll");
   Serial.println("=============================================");
 
   // Mostrar MAC del dispositivo
@@ -1006,15 +1032,18 @@ void setup() {
   }
 
   // --- Mostrar configuración ---
-  Serial.println("--- Configuración del Trigger ---");
+  Serial.println("--- Configuración del Recolector ---");
+  Serial.printf("  RMS Threshold: %.0f (mínimo absoluto)\n", THRESHOLD_RMS);
   Serial.printf("  RMS Factor:    %.1fx sobre baseline\n", RMS_FACTOR);
-  Serial.printf("  Freq. Banda:   %.0f - %.0f Hz\n", FREQ_MIN_HZ, FREQ_MAX_HZ);
-  Serial.printf("  Sostener:      %lu ms\n", (unsigned long)TRIGGER_HOLD_MS);
-  Serial.printf("  Grabación:     %u s (%lu bytes)\n", RECORD_SECONDS,
-                (unsigned long)RECORD_BYTES);
-  Serial.printf("  FFT muestras:  %u (resolución: %.1f Hz/bin)\n", FFT_SAMPLES,
-                (float)SAMPLE_RATE / FFT_SAMPLES);
-  Serial.println("---------------------------------\n");
+  Serial.printf("  Grabación:     %us total (2s pre-roll + 3s live)\n",
+                RECORD_TOTAL_SECONDS);
+  Serial.printf("  ENV Interval:  %lu min\n",
+                (unsigned long)(ENV_INTERVAL_MS / 60000));
+  Serial.printf("  Ring Buffer:   %u muestras (%u KB)\n",
+                RING_BUF_SAMPLES, (RING_BUF_SAMPLES * 2) / 1024);
+  Serial.printf("  FFT:           %u bins (%.1f Hz/bin) — solo metadatos\n",
+                FFT_SAMPLES, (float)SAMPLE_RATE / FFT_SAMPLES);
+  Serial.println("------------------------------------\n");
 
   // === Lanzar tareas FreeRTOS ===
 
@@ -1030,9 +1059,9 @@ void setup() {
                             0                   // Core 0
     );
 
-    // Core 1: Análisis + Grabación (prioridad media)
-    xTaskCreatePinnedToCore(audioAnalysisTask, "Analysis_Rec",
-                            16384, // Stack grande: FFT + buffers
+    // Core 1: Análisis RMS + FFT + Grabación (prioridad media)
+    xTaskCreatePinnedToCore(audioAnalysisTask, "RMS_FFT_Rec",
+                            16384, // Stack grande: FFT buffers
                             NULL,
                             2, // Prioridad media
                             &analysisTaskHandle,

@@ -2,14 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { supabase, Event, getCurrentUserProfile, getUserOrganization, getSiteById } from "@/lib/supabase";
 import { KPICards } from "@/components/dashboard/kpi-cards";
 import { AlertsChart } from "@/components/dashboard/alerts-chart";
 import { EventsTable } from "@/components/dashboard/events-table";
+import { KPISkeleton } from "@/components/dashboard/kpi-skeleton";
+import { TableSkeleton } from "@/components/dashboard/table-skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Activity, LogOut, RefreshCw, Settings } from "lucide-react";
+import { RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+
 export const dynamic = 'force-dynamic';
 
 export default function DashboardPage() {
@@ -23,26 +27,22 @@ export default function DashboardPage() {
 
   const fetchEvents = async () => {
     try {
-      // Verificar autenticación y obtener perfil
       const profile = await getCurrentUserProfile();
       if (!profile) {
         router.push('/login');
         return;
       }
 
-      // Si es super_admin, redirigir al panel de admin
       if (profile.role === 'super_admin') {
         router.push('/admin');
         return;
       }
 
-      // Obtener información de la organización
       const organization = await getUserOrganization();
       if (organization) {
         setOrganizationName(organization.name);
       }
 
-      // Obtener nombre del site asignado (si aplica)
       if (profile.assigned_site_id) {
         const site = await getSiteById(profile.assigned_site_id);
         if (site) {
@@ -50,18 +50,13 @@ export default function DashboardPage() {
         }
       }
 
-      // Obtener eventos
-      // RLS filtrará automáticamente por organization_id del usuario
-      // Si hay assigned_site_id, filtrar también por ese site
       let query = supabase
         .from('events')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(20);
 
-      // Si el usuario tiene un site asignado específico, filtrar por rooms de ese site
       if (profile.assigned_site_id) {
-        // Primero obtener buildings del site
         const { data: buildings } = await supabase
           .from('buildings')
           .select('id')
@@ -70,7 +65,6 @@ export default function DashboardPage() {
         if (buildings && buildings.length > 0) {
           const buildingIds = buildings.map(b => b.id);
           
-          // Luego obtener rooms de esos buildings
           const { data: rooms } = await supabase
             .from('rooms')
             .select('id')
@@ -98,7 +92,6 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchEvents();
     
-    // Set up real-time subscription
     const subscription = supabase
       .channel('events_changes')
       .on(
@@ -121,118 +114,74 @@ export default function DashboardPage() {
 
   const handleRefresh = () => {
     setRefreshing(true);
-    fetchEvents();
+    toast.info("Actualizando datos...");
+    fetchEvents().then(() => toast.success("Datos actualizados"));
   };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="h-12 w-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-card to-background">
-      {/* Header */}
-      <header className="border-b border-border/50 backdrop-blur-sm bg-background/80 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            {/* Logo & Title */}
-            <div className="flex items-center gap-3">
-              <Activity className="h-8 w-8 text-primary glow-warning" strokeWidth={2.5} />
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">Ontiveros Bio-Alert</h1>
-                <div className="flex items-center gap-2">
-                  <p className="text-xs text-muted-foreground">Panel de Monitoreo</p>
-                  {organizationName && (
-                    <>
-                      <span className="text-xs text-muted-foreground">•</span>
-                      <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
-                        {organizationName}
-                      </Badge>
-                    </>
-                  )}
-                  {siteName && (
-                    <>
-                      <span className="text-xs text-muted-foreground">/</span>
-                      <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-500">
-                        {siteName}
-                      </Badge>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-2">
-              <Link href="/dashboard/settings/farm">
-                <Button variant="outline" className="gap-2" title="Configurar estructura de la granja">
-                  <Settings className="h-4 w-4" />
-                  <span className="hidden sm:inline">Configurar Granja</span>
-                </Button>
-              </Link>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleRefresh}
-                disabled={refreshing}
-                title="Actualizar"
-              >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-              </Button>
-              <Button variant="ghost" size="icon" title="Configuración">
-                <Settings className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={handleLogout} title="Cerrar Sesión">
-                <LogOut className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-8 space-y-8">
-        {/* Subtitle */}
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-card/30">
+      {/* Page Content */}
+      <div className="px-6 lg:px-8 py-8 space-y-8">
+        {/* Page Header */}
+        <div className="flex items-center justify-between animate-in-view stagger-1">
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">Resumen en tiempo real</h2>
-            <p className="text-sm text-muted-foreground">
-              Análisis bioacústico y gestión de alertas en tiempo real
-            </p>
+            <h1 className="text-2xl font-bold tracking-tight">Resumen en Tiempo Real</h1>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-sm text-muted-foreground">
+                Análisis bioacústico y gestión de alertas
+              </p>
+              {organizationName && (
+                <>
+                  <span className="text-muted-foreground/40">•</span>
+                  <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
+                    {organizationName}
+                  </Badge>
+                </>
+              )}
+              {siteName && (
+                <>
+                  <span className="text-muted-foreground/40">/</span>
+                  <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-500">
+                    {siteName}
+                  </Badge>
+                </>
+              )}
+            </div>
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Actualizar"
+          >
+            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+          </Button>
         </div>
 
         {/* KPIs */}
-        <KPICards events={events} />
+        {loading ? <KPISkeleton /> : <KPICards events={events} />}
 
         {/* Chart */}
-        <AlertsChart events={events} />
-
-        {/* Events Table */}
-        <EventsTable events={events} />
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border/50 mt-16">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
-            <div>
-              <span className="font-semibold">Ontiveros Bio-Alert</span> v0.7.0 | Plataforma Edge Computing
-            </div>
-            <div>
-              Inteligencia Ganadera de Próxima Generación | © {new Date().getFullYear()}
+        {loading ? (
+          <div className="animate-in-view stagger-4">
+            <div className="h-[400px] rounded-lg glass-effect flex items-center justify-center">
+              <div className="h-8 w-8 border-3 border-primary/20 border-t-primary rounded-full animate-spin" />
             </div>
           </div>
-        </div>
-      </footer>
+        ) : (
+          <div className="animate-in-view stagger-4">
+            <AlertsChart events={events} />
+          </div>
+        )}
+
+        {/* Events Table */}
+        {loading ? <TableSkeleton /> : (
+          <div className="animate-in-view stagger-5">
+            <EventsTable events={events} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-# Ontiveros Bio-Alert - Bioacoustic Monitoring System
+# Brivex Bio-Alert - Bioacoustic Monitoring System
 
 **Next-generation livestock monitoring platform powered by AI-driven audio analysis**
 
@@ -11,7 +11,7 @@
 
 ## 🎯 Overview
 
-Ontiveros Bio-Alert is an industrial-grade web platform for real-time bioacoustic monitoring in livestock operations. It provides:
+Brivex Bio-Alert is an industrial-grade web platform for real-time bioacoustic monitoring in livestock operations. It provides:
 
 - **Real-time Alert Monitoring**: Live dashboard with instant notifications
 - **Audio Analysis**: ML-powered sound classification and pattern recognition
@@ -113,7 +113,7 @@ axis-frontend/
 
 ### Color Palette - Industrial Dark Mode
 
-Ontiveros Bio-Alert uses a carefully crafted "Industrial Dark Mode" palette:
+Brivex Bio-Alert uses a carefully crafted "Industrial Dark Mode" palette:
 
 | Color | Usage | oklch Value |
 |-------|-------|-------------|
@@ -362,7 +362,7 @@ Proprietary - All Rights Reserved
 
 Built with passion for next-generation livestock intelligence.
 
-**Ontiveros Bio-Alert** - Transforming Agriculture Through Technology
+**Brivex Bio-Alert** - Transforming Agriculture Through Technology
 
 ---
 
@@ -423,14 +423,14 @@ Por detrás, el sistema ejecuta exactamente el INSERT de arriba automáticamente
 
 DOCUMENTACION 
 
-# 🐷 Ontiveros Bio-Alert | IoT SaaS Platform
+# 🐷 Brivex Bio-Alert | IoT SaaS Platform
 
 **Versión:** 1.0.0 (Enterprise Architecture)
 **Stack:** Next.js + Supabase + Tailwind CSS + IoT Integration
 
 ## 📖 Descripción del Proyecto
 
-Ontiveros Bio-Alert es una plataforma SaaS Multi-Tenant diseñada para el monitoreo bio-acústico en granjas porcinas. El sistema permite detectar enfermedades respiratorias mediante el análisis de audio en tiempo real, ofreciendo dashboards diferenciados para la gestión operativa (Granjeros) y la gestión de negocio/hardware (Super Admin).
+Brivex Bio-Alert es una plataforma SaaS Multi-Tenant diseñada para el monitoreo bio-acústico en granjas porcinas. El sistema permite detectar enfermedades respiratorias mediante el análisis de audio en tiempo real, ofreciendo dashboards diferenciados para la gestión operativa (Granjeros) y la gestión de negocio/hardware (Super Admin).
 
 La arquitectura ha sido refactorizada para soportar desde pequeños productores hasta grandes corporaciones (como Plumrose) mediante una estructura jerárquica escalable.
 
@@ -477,7 +477,7 @@ La aplicación está dividida en dos "mundos" totalmente separados:
     * **Self-Service:** Configuración de granja (`/dashboard/settings/farm`) para agregar naves/salas sin soporte técnico.
 
 ### 2. 🛡️ Super Admin Dashboard (`/admin`)
-* **Audiencia:** CEO, Equipo Técnico de Ontiveros.
+* **Audiencia:** CEO, Equipo Técnico de Brivex.
 * **Funciones:**
     * **KPIs de Negocio:** MRR, Churn, Costos de Nube.
     * **Drill-Down:** Navegación profunda por la jerarquía de los clientes.
@@ -543,4 +543,4 @@ Si necesitas hacer consultas SQL manuales, estas son las tablas clave:
 
 ---
 
-*Documentación generada para Ontiveros Bio-Alert © 2026*
+*Documentación generada para Brivex Bio-Alert © 2026*

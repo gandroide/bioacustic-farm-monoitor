@@ -15,7 +15,7 @@ export type UserRole = 'super_admin' | 'org_admin' | 'site_manager' | 'viewer'
 
 /**
  * Organization - Nivel superior (Cliente Enterprise)
- * Ejemplo: "Grupo Porcícola Ontiveros"
+ * Ejemplo: "Grupo Porcícola Brivex"
  */
 export interface Organization {
   id: string

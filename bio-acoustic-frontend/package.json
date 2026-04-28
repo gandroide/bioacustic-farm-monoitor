@@ -1,7 +1,7 @@
 {
-  "name": "ontiveros-bio-alert",
+  "name": "brivex-bio-alert",
   "version": "0.7.0",
-  "description": "Ontiveros Bio-Alert - Industrial-grade bioacoustic monitoring platform for livestock operations",
+  "description": "Brivex Bio-Alert - Industrial-grade bioacoustic monitoring platform for livestock operations, by Integral Services OIF",
   "private": true,
   "scripts": {
     "dev": "next dev --hostname localhost",
@@ -21,9 +21,12 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.563.0",
     "next": "16.1.5",
+    "next-themes": "^0.4.6",
+    "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "wavesurfer.js": "^7.12.1"
   },

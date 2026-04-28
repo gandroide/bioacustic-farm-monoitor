@@ -9,7 +9,7 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   
-  /* Custom Ontiveros Bio-Alert colors */
+  /* Custom Brivex Bio-Alert colors */
   --color-alert-warning: var(--alert-warning);
   --color-alert-success: var(--alert-success);
   --color-alert-danger: var(--alert-danger);
@@ -60,68 +60,68 @@
 }
 
 :root {
-  --radius: 0.375rem;
+  --radius: 0.625rem;
   
   /* Industrial Dark Mode - Default Theme */
-  /* Background: Slate-950 (very dark, industrial feel) */
   --background: oklch(0.11 0.015 264);
   --foreground: oklch(0.95 0.01 264);
   
   /* Cards: Slightly lighter than background for depth */
-  --card: oklch(0.16 0.02 264);
+  --card: oklch(0.15 0.015 264);
   --card-foreground: oklch(0.95 0.01 264);
   
   /* Popovers */
-  --popover: oklch(0.16 0.02 264);
+  --popover: oklch(0.15 0.015 264);
   --popover-foreground: oklch(0.95 0.01 264);
   
-  /* Primary: Orange Amber (for alerts and important actions) */
-  --primary: oklch(0.68 0.19 55);
+  /* Primary: Orange Amber */
+  --primary: oklch(0.72 0.19 55);
   --primary-foreground: oklch(0.11 0.015 264);
   
-  /* Secondary: Darker slate */
-  --secondary: oklch(0.22 0.02 264);
+  /* Secondary */
+  --secondary: oklch(0.20 0.015 264);
   --secondary-foreground: oklch(0.95 0.01 264);
   
-  /* Muted: For less important text */
-  --muted: oklch(0.22 0.02 264);
-  --muted-foreground: oklch(0.6 0.015 264);
+  /* Muted */
+  --muted: oklch(0.20 0.015 264);
+  --muted-foreground: oklch(0.55 0.015 264);
   
-  /* Accent: Green Emerald (for safe/success states) */
+  /* Accent: Emerald */
   --accent: oklch(0.5 0.15 165);
   --accent-foreground: oklch(0.95 0.01 264);
   
-  /* Destructive: Red for danger */
+  /* Destructive */
   --destructive: oklch(0.58 0.22 25);
   
-  /* Borders and inputs: Subtle dark borders */
-  --border: oklch(0.3 0.02 264);
-  --input: oklch(0.25 0.02 264);
-  --ring: oklch(0.68 0.19 55);
+  /* Borders and inputs */
+  --border: oklch(0.25 0.015 264);
+  --input: oklch(0.20 0.015 264);
+  --ring: oklch(0.72 0.19 55);
   
-  /* Chart colors: Matching the industrial theme */
-  --chart-1: oklch(0.68 0.19 55);  /* Orange Amber */
-  --chart-2: oklch(0.5 0.15 165);  /* Green Emerald */
-  --chart-3: oklch(0.6 0.18 230);  /* Blue Steel */
-  --chart-4: oklch(0.65 0.17 300); /* Purple Tech */
-  --chart-5: oklch(0.58 0.22 25);  /* Red Alert */
+  /* Chart colors */
+  --chart-1: oklch(0.72 0.19 55);
+  --chart-2: oklch(0.5 0.15 165);
+  --chart-3: oklch(0.6 0.18 230);
+  --chart-4: oklch(0.65 0.17 300);
+  --chart-5: oklch(0.58 0.22 25);
   
   /* Custom alert colors */
-  --alert-warning: oklch(0.68 0.19 55);  /* Orange Amber */
-  --alert-success: oklch(0.5 0.15 165);  /* Green Emerald */
-  --alert-danger: oklch(0.58 0.22 25);   /* Red */
+  --alert-warning: oklch(0.72 0.19 55);
+  --alert-success: oklch(0.5 0.15 165);
+  --alert-danger: oklch(0.58 0.22 25);
   
   /* Sidebar */
-  --sidebar: oklch(0.13 0.015 264);
-  --sidebar-foreground: oklch(0.95 0.01 264);
-  --sidebar-primary: oklch(0.68 0.19 55);
+  --sidebar: oklch(0.09 0.015 264);
+  --sidebar-foreground: oklch(0.65 0.01 264);
+  --sidebar-primary: oklch(0.72 0.19 55);
   --sidebar-primary-foreground: oklch(0.11 0.015 264);
-  --sidebar-accent: oklch(0.22 0.02 264);
+  --sidebar-accent: oklch(0.16 0.015 264);
   --sidebar-accent-foreground: oklch(0.95 0.01 264);
-  --sidebar-border: oklch(0.3 0.02 264);
-  --sidebar-ring: oklch(0.68 0.19 55);
+  --sidebar-border: oklch(0.20 0.015 264);
+  --sidebar-ring: oklch(0.72 0.19 55);
 }
 
+/* ===== BASE LAYER ===== */
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -132,28 +132,78 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
   
-  /* Scrollbar styling for industrial look */
+  /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
   
   ::-webkit-scrollbar-track {
-    background: oklch(0.16 0.02 264);
+    background: transparent;
   }
   
   ::-webkit-scrollbar-thumb {
-    background: oklch(0.3 0.02 264);
-    border-radius: 4px;
+    background: oklch(0.25 0.015 264);
+    border-radius: 3px;
   }
   
   ::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.4 0.02 264);
+    background: oklch(0.35 0.015 264);
   }
 }
 
+/* ===== KEYFRAME ANIMATIONS ===== */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 20px oklch(0.72 0.19 55 / 0.15); }
+}
+
+/* ===== UTILITY CLASSES ===== */
 @layer utilities {
-  /* Custom utility classes for Ontiveros Bio-Alert */
+  /* Alert semantics */
   .alert-warning {
     @apply bg-alert-warning/10 text-alert-warning border-alert-warning/20;
   }
@@ -166,15 +216,76 @@
     @apply bg-alert-danger/10 text-alert-danger border-alert-danger/20;
   }
   
+  /* Glass effects */
   .glass-effect {
-    @apply backdrop-blur-md bg-card/50 border border-border/50;
+    @apply backdrop-blur-md bg-card/60 border border-border/40;
   }
   
+  .glass-effect-strong {
+    @apply backdrop-blur-xl bg-card/80 border border-border/50;
+  }
+  
+  /* Glow effects */
   .glow-warning {
-    box-shadow: 0 0 20px oklch(0.68 0.19 55 / 0.3);
+    box-shadow: 0 0 16px oklch(0.72 0.19 55 / 0.25);
   }
   
   .glow-success {
-    box-shadow: 0 0 20px oklch(0.5 0.15 165 / 0.3);
+    box-shadow: 0 0 16px oklch(0.5 0.15 165 / 0.25);
+  }
+  
+  .glow-danger {
+    box-shadow: 0 0 16px oklch(0.58 0.22 25 / 0.25);
+  }
+  
+  /* Staggered animation entrance */
+  .animate-in-view {
+    animation: fade-in-up 0.5s ease-out both;
+  }
+  
+  .animate-fade-in {
+    animation: fade-in 0.4s ease-out both;
+  }
+  
+  .animate-scale-in {
+    animation: scale-in 0.4s ease-out both;
+  }
+  
+  .animate-slide-left {
+    animation: slide-in-left 0.4s ease-out both;
+  }
+  
+  /* Stagger delays */
+  .stagger-1 { animation-delay: 0ms; }
+  .stagger-2 { animation-delay: 75ms; }
+  .stagger-3 { animation-delay: 150ms; }
+  .stagger-4 { animation-delay: 225ms; }
+  .stagger-5 { animation-delay: 300ms; }
+  .stagger-6 { animation-delay: 375ms; }
+  
+  /* Premium card hover */
+  .card-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+  
+  .card-hover:hover {
+    @apply border-primary/30;
+    transform: translateY(-2px);
+    box-shadow: 
+      0 4px 24px oklch(0 0 0 / 0.3),
+      0 0 0 1px oklch(0.72 0.19 55 / 0.1);
+  }
+  
+  /* Sidebar specific */
+  .sidebar-item {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-200;
+  }
+  
+  .sidebar-item:hover {
+    @apply bg-sidebar-accent text-sidebar-accent-foreground;
+  }
+  
+  .sidebar-item-active {
+    @apply bg-sidebar-accent text-sidebar-primary font-medium;
   }
 }

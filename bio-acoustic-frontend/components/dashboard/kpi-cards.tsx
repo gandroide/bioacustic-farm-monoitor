@@ -2,15 +2,15 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Bell, Zap, Waves } from "lucide-react"; // Agregué Waves
+import { Activity, Bell, Zap, Waves } from "lucide-react";
 import { Event } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 
 interface KPICardsProps {
   events: Event[];
 }
 
 export function KPICards({ events }: KPICardsProps) {
-  // Calculate KPIs from events
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
@@ -34,40 +34,44 @@ export function KPICards({ events }: KPICardsProps) {
       value: totalAlertsToday,
       subtitle: "Período de 24h",
       icon: Bell,
-      trend: totalAlertsToday > 0 ? `+12% vs ayer` : 'Sin alertas',
-      trendUp: totalAlertsToday > 5,
-      color: totalAlertsToday > 10 ? "text-alert-danger" : "text-alert-warning",
+      badge: totalAlertsToday > 0 ? `${totalAlertsToday} detectadas` : 'Sin alertas',
+      badgeVariant: totalAlertsToday > 10 ? "danger" : totalAlertsToday > 0 ? "warning" : "success",
+      color: totalAlertsToday > 10 ? "text-red-500" : "text-primary",
       glowClass: totalAlertsToday > 10 ? "glow-danger" : "glow-warning",
+      iconBg: totalAlertsToday > 10 ? "bg-red-500/10" : "bg-primary/10",
     },
     {
       title: "Última Alerta",
       value: lastAlertTime,
       subtitle: "Evento más reciente",
       icon: Activity,
-      trend: `Dispositivo: ${lastEvent?.device_id || 'N/A'}`,
-      trendUp: null,
+      badge: lastEvent?.device_id ? `Nodo: ${lastEvent.device_id}` : null,
+      badgeVariant: "default",
       color: "text-primary",
       glowClass: "glow-warning",
+      iconBg: "bg-primary/10",
     },
     {
-      title: "Nivel de Ruido Promedio",
-      value: `${avgNoiseLevel}`,
-      subtitle: "Amplitud RMS",
-      icon: Waves, // <--- AQUÍ FALTABA EL ICONO
-      trend: "Dentro del rango normal",
-      trendUp: false,
+      title: "Nivel de Ruido",
+      value: `${avgNoiseLevel} RMS`,
+      subtitle: "Amplitud promedio",
+      icon: Waves,
+      badge: avgNoiseLevel > 0 ? "Rango normal" : null,
+      badgeVariant: "success",
       color: "text-accent",
       glowClass: "glow-success",
+      iconBg: "bg-emerald-500/10",
     },
     {
-      title: "Estado del Sistema",
+      title: "Estado",
       value: systemStatus === "online" ? "Operacional" : "Fuera de línea",
-      subtitle: "Dispositivos edge",
+      subtitle: "Sensores edge",
       icon: Zap,
-      trend: "Todos los sensores activos",
-      trendUp: true,
-      color: systemStatus === "online" ? "text-accent" : "text-destructive",
-      glowClass: systemStatus === "online" ? "glow-success" : "",
+      badge: systemStatus === "online" ? "✓ Todos activos" : "⚠ Fallo detectado",
+      badgeVariant: systemStatus === "online" ? "success" : "danger",
+      color: systemStatus === "online" ? "text-emerald-500" : "text-red-500",
+      glowClass: systemStatus === "online" ? "glow-success" : "glow-danger",
+      iconBg: systemStatus === "online" ? "bg-emerald-500/10" : "bg-red-500/10",
     },
   ];
 
@@ -75,43 +79,47 @@ export function KPICards({ events }: KPICardsProps) {
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       {cards.map((card, index) => {
         const Icon = card.icon;
+        const badgeClass = card.badgeVariant === "danger" 
+          ? "alert-danger" 
+          : card.badgeVariant === "warning" 
+            ? "alert-warning" 
+            : card.badgeVariant === "success"
+              ? "alert-success"
+              : "bg-muted text-muted-foreground";
+
         return (
-          <Card key={index} className="glass-effect hover:border-primary/30 transition-all duration-300">
+          <Card 
+            key={index} 
+            className={cn(
+              "glass-effect card-hover animate-in-view",
+              `stagger-${index + 1}`
+            )}
+          >
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 {card.title}
               </CardTitle>
-              <div className={`${card.glowClass}`}>
-                {/* Añadimos protección por si Icon es undefined */}
-                {Icon && <Icon className={`h-5 w-5 ${card.color}`} strokeWidth={2} />}
+              <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", card.iconBg)}>
+                <Icon className={cn("h-[18px] w-[18px]", card.color)} strokeWidth={2} />
               </div>
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-bold ${card.color}`}>
+              <div className={cn("text-2xl font-bold tracking-tight", card.color)}>
                 {card.value}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {card.subtitle}
               </p>
-              <div className="flex items-center gap-2 mt-3">
-                {card.trendUp !== null && (
+              {card.badge && (
+                <div className="mt-3">
                   <Badge 
                     variant="outline" 
-                    className={`text-[10px] font-mono ${
-                      card.trendUp 
-                        ? "alert-warning" 
-                        : "alert-success"
-                    }`}
+                    className={cn("text-[10px] font-mono", badgeClass)}
                   >
-                    {card.trendUp ? "↑" : "↓"} {card.trend}
+                    {card.badge}
                   </Badge>
-                )}
-                {card.trendUp === null && (
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {card.trend}
-                  </span>
-                )}
-              </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         );

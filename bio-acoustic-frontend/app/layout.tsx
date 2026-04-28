@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const inter = Inter({ 
@@ -13,12 +15,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ontiveros Bio-Alert | Bioacoustic Monitoring System",
+  title: "Brivex Bio-Alert | Bioacoustic Monitoring System",
   description: "Industrial-grade bioacoustic monitoring platform for livestock operations. Real-time audio analysis, alert management, and predictive insights.",
-  keywords: ["bioacoustics", "livestock", "monitoring", "IoT", "agriculture", "Ontiveros"],
-  authors: [{ name: "Ontiveros Bio-Alert" }],
+  keywords: ["bioacoustics", "livestock", "monitoring", "IoT", "agriculture", "Brivex", "Integral Services OIF"],
+  authors: [{ name: "Brivex Bio-Alert by Integral Services OIF" }],
   openGraph: {
-    title: "Ontiveros Bio-Alert | Bioacoustic Monitoring",
+    title: "Brivex Bio-Alert | Bioacoustic Monitoring",
     description: "Next-generation livestock monitoring through AI-powered audio analysis",
     type: "website",
   },
@@ -41,9 +43,17 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="Bio-Alert" />
       </head>
       <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased dark`}>
-        {children}
+        <TooltipProvider delayDuration={300}>
+          {children}
+        </TooltipProvider>
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          toastOptions={{
+            className: "glass-effect-strong border-border/50",
+          }}
+        />
       </body>
     </html>
   );
 }
-

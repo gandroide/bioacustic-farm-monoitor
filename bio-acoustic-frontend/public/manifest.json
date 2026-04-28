@@ -1,6 +1,6 @@
 {
-  "name": "Ontiveros Bio-Alert",
-  "short_name": "Bio-Alert",
+  "name": "Brivex Bio-Alert",
+  "short_name": "Brivex Bio-Alert",
   "description": "Sistema de monitoreo bioacústico para granjas porcinas. Detecta aplastamiento de lechones mediante IA y alerta en tiempo real.",
   "start_url": "/dashboard",
   "display": "standalone",

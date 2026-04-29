@@ -15,6 +15,8 @@ import {
   deleteBuilding,
   deleteRoom,
   claimDeviceToRoom,
+  supabase,
+  Event,
   Building,
   Room,
   Device,
@@ -62,8 +64,11 @@ import {
   MoreVertical,
   Edit2,
   Trash2,
-  Save
+  Save,
+  RefreshCw
 } from "lucide-react";
+import { EventsTable } from "@/components/dashboard/events-table";
+import { AlertsChart } from "@/components/dashboard/alerts-chart";
 
 export const dynamic = 'force-dynamic';
 
@@ -96,6 +101,8 @@ export default function SiteInspectionPage() {
   const [totalDevices, setTotalDevices] = useState(0);
   const [onlineDevices, setOnlineDevices] = useState(0);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Dialog state
   const [dialogState, setDialogState] = useState<DialogState>({ mode: null });
@@ -145,6 +152,8 @@ export default function SiteInspectionPage() {
                 devices: devices.map(d => ({
                   id: d.id,
                   device_id: d.device_id,
+                  uid: d.uid,
+                  mac_address: d.mac_address,
                   room_id: d.room_id,
                   name: d.name,
                   status: d.status,
@@ -178,6 +187,32 @@ export default function SiteInspectionPage() {
       setTotalDevices(total);
       setOnlineDevices(online);
 
+      // Fetch acoustic events for this site's rooms
+      const roomIds: string[] = [];
+      buildingsWithData.forEach(b => {
+        b.rooms.forEach(r => roomIds.push(r.id));
+      });
+
+      let eventsQuery = supabase
+        .from('acoustic_events')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (roomIds.length > 0) {
+        // Filter by rooms in this site, but also include unassigned events (room_id is null) 
+        // to ensure hardcoded testing events are visible to the Super Admin
+        eventsQuery = eventsQuery.or(`room_id.in.(${roomIds.join(',')}),room_id.is.null`);
+      }
+
+      const { data: eventsData, error: eventsError } = await eventsQuery;
+
+      if (eventsError) {
+        console.error('Error fetching site events:', eventsError);
+      } else {
+        setEvents(eventsData || []);
+      }
+
     } catch (error) {
       console.error('Error fetching site data:', error);
     } finally {
@@ -187,6 +222,26 @@ export default function SiteInspectionPage() {
 
   useEffect(() => {
     fetchSiteData();
+
+    // Subscribe to realtime events for this site
+    const subscription = supabase
+      .channel('admin_events_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'acoustic_events',
+        },
+        () => {
+          fetchSiteData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [siteId]);
 
   const showNotification = (type: 'success' | 'error', message: string) => {
@@ -345,6 +400,11 @@ export default function SiteInspectionPage() {
     return `Hace ${diffDays}d`;
   };
 
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchSiteData().then(() => setRefreshing(false));
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-card to-background">
@@ -433,6 +493,15 @@ export default function SiteInspectionPage() {
                   </>
                 )}
               </Badge>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleRefresh}
+                disabled={refreshing || loading}
+                title="Actualizar"
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              </Button>
             </div>
           </div>
         </div>
@@ -520,7 +589,19 @@ export default function SiteInspectionPage() {
           </Card>
         </div>
 
+        {/* Bioacoustic Events Feed */}
+        <div className="space-y-6 animate-in-view stagger-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold tracking-tight">Análisis Bioacústico del Sitio</h2>
+          </div>
+          <AlertsChart events={events} />
+          <EventsTable events={events} />
+        </div>
+
         {/* Buildings Grid */}
+        <div className="flex items-center justify-between mt-12 animate-in-view stagger-5">
+          <h2 className="text-xl font-bold tracking-tight">Infraestructura IoT</h2>
+        </div>
         {buildings.length === 0 ? (
           <Card className="glass-effect">
             <CardContent className="py-12 text-center">
@@ -705,7 +786,7 @@ export default function SiteInspectionPage() {
                                       </div>
                                       <div className="text-xs font-mono bg-muted/50 p-1.5 rounded">
                                         <span className="text-muted-foreground">UID:</span>
-                                        <span className="ml-2 text-primary font-semibold">{device.device_id}</span>
+                                        <span className="ml-2 text-primary font-semibold">{device.uid || device.mac_address || device.device_id}</span>
                                       </div>
                                       <div className="text-xs">
                                         <span className="text-muted-foreground">Heartbeat:</span>

@@ -23,7 +23,7 @@ export function KPICards({ events }: KPICardsProps) {
     : '--:--';
   
   const avgNoiseLevel = events.length > 0
-    ? Math.round(events.reduce((sum, e) => sum + (e.metadata?.rms || 0), 0) / events.length)
+    ? Math.round(events.reduce((sum, e) => sum + (e.rms_level || 0), 0) / events.length)
     : 0;
   
   const systemStatus: "online" | "offline" = "online";

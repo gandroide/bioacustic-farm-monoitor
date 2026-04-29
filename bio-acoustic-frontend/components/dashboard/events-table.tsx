@@ -22,25 +22,10 @@ export function EventsTable({ events }: EventsTableProps) {
     });
   };
 
-  const getConfidenceLevel = (confidence: number) => {
-    if (confidence >= 0.8) return 'alta';
-    if (confidence >= 0.5) return 'media';
-    return 'baja';
-  };
-
-  const getConfidenceBadgeClass = (level: string) => {
-    if (level === 'alta') return 'alert-danger';
-    if (level === 'media') return 'alert-warning';
-    return 'alert-success';
-  };
-
-  const getConfidenceBadge = (confidence: number) => {
-    const level = getConfidenceLevel(confidence);
-    const className = getConfidenceBadgeClass(level);
-    const percentage = (confidence * 100).toFixed(0);
+  const getConfidenceBadge = () => {
     return (
-      <Badge className={`${className} font-mono text-sm px-4 py-1.5`}>
-        {level.toUpperCase()} {percentage}%
+      <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 uppercase text-[10px] tracking-wider px-2">
+        N/A
       </Badge>
     );
   };
@@ -110,13 +95,13 @@ export function EventsTable({ events }: EventsTableProps) {
                 <TableRow>
                   <TableCell colSpan={5} className="text-center py-12">
                     <Activity className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
-                    <p className="text-lg font-medium text-muted-foreground">Sin eventos registrados</p>
+                    <p className="font-semibold capitalize text-foreground">Sin eventos registrados</p>
                     <p className="text-sm text-muted-foreground/70">El sistema está monitoreando en tiempo real</p>
                   </TableCell>
                 </TableRow>
               ) : (
                 events.map((event) => {
-                  const alertDetails = getAlertTypeDetails(event.alert_type);
+                  const alertDetails = getAlertTypeDetails(event.event_type);
                   const AlertIcon = alertDetails.icon;
                   
                   return (
@@ -133,17 +118,17 @@ export function EventsTable({ events }: EventsTableProps) {
                         </div>
                       </TableCell>
                       <TableCell className="text-center">
-                        {getConfidenceBadge(event.confidence)}
+                        {getConfidenceBadge()}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center justify-center gap-6 font-mono text-xs">
                           <div className="flex items-center gap-2">
                             <span className="text-muted-foreground">RMS:</span>
-                            <span className="text-amber-500 font-bold text-sm">{event.metadata?.rms?.toFixed(2) || 'N/A'}</span>
+                            <span className="text-amber-500 font-bold text-sm">{event.rms_level?.toFixed(2) || 'N/A'}</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground">ZCR:</span>
-                            <span className="text-emerald-500 font-bold text-sm">{event.metadata?.zcr?.toFixed(2) || 'N/A'}</span>
+                          <div className="flex flex-col border-l border-border/50 pl-3">
+                            <span className="text-[10px] text-muted-foreground font-mono mb-1">BATTERY</span>
+                            <span className="text-emerald-500 font-bold text-sm">{event.battery_percentage ? `${event.battery_percentage}%` : 'N/A'}</span>
                           </div>
                         </div>
                       </TableCell>

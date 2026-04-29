@@ -27,7 +27,7 @@ export function AppShell({ children, requiredRole }: AppShellProps) {
           .from("profiles")
           .select("full_name, role, organization_id")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         if (profile) {
           setUserName(profile.full_name || user.email || "Usuario");
@@ -38,7 +38,7 @@ export function AppShell({ children, requiredRole }: AppShellProps) {
               .from("organizations")
               .select("name")
               .eq("id", profile.organization_id)
-              .single();
+              .maybeSingle();
             if (org) setOrgName(org.name);
           }
         }

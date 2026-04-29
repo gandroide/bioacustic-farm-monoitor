@@ -51,7 +51,7 @@ export default function DashboardPage() {
       }
 
       let query = supabase
-        .from('events')
+        .from('acoustic_events')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(20);
@@ -91,7 +91,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchEvents();
-    
     const subscription = supabase
       .channel('events_changes')
       .on(
@@ -99,7 +98,7 @@ export default function DashboardPage() {
         {
           event: '*',
           schema: 'public',
-          table: 'events',
+          table: 'acoustic_events',
         },
         () => {
           fetchEvents();
@@ -115,7 +114,7 @@ export default function DashboardPage() {
   const handleRefresh = () => {
     setRefreshing(true);
     toast.info("Actualizando datos...");
-    fetchEvents().then(() => toast.success("Datos actualizados"));
+    Promise.all([fetchEvents()]).then(() => toast.success("Datos actualizados"));
   };
 
   return (
@@ -181,6 +180,7 @@ export default function DashboardPage() {
             <EventsTable events={events} />
           </div>
         )}
+
       </div>
     </div>
   );

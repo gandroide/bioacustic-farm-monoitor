@@ -23,14 +23,14 @@ export function AlertsChart({ events }: AlertsChartProps) {
       return eventTime >= hour && eventTime < hourEnd;
     });
     
-    const avgConfidence = hourEvents.length > 0
-      ? Math.round(hourEvents.reduce((sum, e) => sum + e.confidence, 0) / hourEvents.length * 100)
+    const avgRms = hourEvents.length > 0
+      ? Math.round(hourEvents.reduce((sum, e) => sum + (e.rms_level || 0), 0) / hourEvents.length)
       : 0;
     
     return {
       time: hour.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
       alerts: hourEvents.length,
-      confidence: avgConfidence,
+      rms: avgRms,
     };
   });
 
@@ -53,9 +53,9 @@ export function AlertsChart({ events }: AlertsChartProps) {
                 <stop offset="5%" stopColor="oklch(0.68 0.19 55)" stopOpacity={0.3}/>
                 <stop offset="95%" stopColor="oklch(0.68 0.19 55)" stopOpacity={0}/>
               </linearGradient>
-              <linearGradient id="confidenceGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="oklch(0.5 0.15 165)" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="oklch(0.5 0.15 165)" stopOpacity={0}/>
+              <linearGradient id="rmsGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
               </linearGradient>
             </defs>
             <CartesianGrid 
@@ -77,6 +77,14 @@ export function AlertsChart({ events }: AlertsChartProps) {
               tickLine={false}
               axisLine={false}
               dx={-10}
+            />
+            <YAxis 
+              yAxisId="right"
+              orientation="right"
+              stroke="oklch(0.6 0.015 264)"
+              fontSize={11}
+              tickLine={false}
+              axisLine={false}
             />
             <Tooltip 
               content={({ active, payload }) => {
@@ -103,10 +111,10 @@ export function AlertsChart({ events }: AlertsChartProps) {
                           </div>
                           <div className="flex flex-col">
                             <span className="text-[10px] uppercase text-muted-foreground font-mono">
-                              Confianza
+                              RMS
                             </span>
                             <span className="font-bold text-sm text-accent">
-                              {payload[1]?.value}%
+                              {payload[1]?.value}
                             </span>
                           </div>
                         </div>
@@ -125,10 +133,11 @@ export function AlertsChart({ events }: AlertsChartProps) {
               strokeWidth={2}
             />
             <Area
+              yAxisId="right"
               type="monotone"
-              dataKey="confidence"
-              stroke="oklch(0.5 0.15 165)"
-              fill="url(#confidenceGradient)"
+              dataKey="rms"
+              stroke="hsl(var(--primary))"
+              fill="url(#rmsGradient)"
               strokeWidth={2}
             />
           </AreaChart>

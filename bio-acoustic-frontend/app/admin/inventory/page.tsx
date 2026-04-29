@@ -62,7 +62,8 @@ export default function InventoryPage() {
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
   const [selectedDevice, setSelectedDevice] = useState<UnassignedDevice | null>(null);
   const [formData, setFormData] = useState({
-    deviceId: "",
+    uid: "",
+    mac_address: "",
     name: ""
   });
   const [submitting, setSubmitting] = useState(false);
@@ -80,7 +81,7 @@ export default function InventoryPage() {
       // Obtener dispositivos no asignados (room_id = NULL)
       const { data, error } = await supabase
         .from('devices')
-        .select('*')
+        .select('*, uid, mac_address')
         .is('room_id', null)
         .order('created_at', { ascending: false });
 
@@ -108,13 +109,15 @@ export default function InventoryPage() {
     if (mode === 'edit' && device) {
       setSelectedDevice(device);
       setFormData({
-        deviceId: device.device_id,
+        uid: device.uid || "",
+        mac_address: device.mac_address || "",
         name: device.name || ""
       });
     } else {
       setSelectedDevice(null);
       setFormData({
-        deviceId: "",
+        uid: "",
+        mac_address: "",
         name: ""
       });
     }
@@ -123,12 +126,12 @@ export default function InventoryPage() {
   const closeDialog = () => {
     setDialogMode(null);
     setSelectedDevice(null);
-    setFormData({ deviceId: "", name: "" });
+    setFormData({ uid: "", mac_address: "", name: "" });
   };
 
   const handleSubmit = async () => {
-    if (!formData.deviceId.trim()) {
-      showNotification('error', '❌ El Device UID es obligatorio');
+    if (!formData.mac_address?.trim() && !formData.uid?.trim()) {
+      showNotification('error', '❌ Debes proveer un UID o una Dirección MAC');
       return;
     }
 
@@ -139,9 +142,11 @@ export default function InventoryPage() {
         const { error } = await supabase
           .from('devices')
           .insert({
-            device_id: formData.deviceId.trim(),
+            uid: formData.uid.trim() || null,
+            mac_address: formData.mac_address.trim() || null,
             name: formData.name.trim() || null,
             status: 'offline',
+            is_active: true,
             room_id: null // Importante: sin asignar
           });
 
@@ -162,7 +167,8 @@ export default function InventoryPage() {
         const { error } = await supabase
           .from('devices')
           .update({
-            device_id: formData.deviceId.trim(),
+            uid: formData.uid.trim() || null,
+            mac_address: formData.mac_address.trim() || null,
             name: formData.name.trim() || null,
             updated_at: new Date().toISOString()
           })
@@ -362,7 +368,7 @@ export default function InventoryPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead className="font-semibold">Device UID</TableHead>
+                      <TableHead className="font-semibold">Device UID / MAC</TableHead>
                       <TableHead className="font-semibold">Nombre/Modelo</TableHead>
                       <TableHead className="font-semibold w-[120px]">Estado</TableHead>
                       <TableHead className="font-semibold w-[180px]">Fecha de Registro</TableHead>
@@ -373,9 +379,14 @@ export default function InventoryPage() {
                     {devices.map((device) => (
                       <TableRow key={device.id} className="hover:bg-muted/30 transition-colors">
                         <TableCell>
-                          <span className="font-mono text-sm font-semibold text-primary">
-                            {device.device_id}
-                          </span>
+                          <div className="flex flex-col">
+                            <span className="font-mono text-sm font-semibold text-primary">
+                              {device.uid || 'Sin UID'}
+                            </span>
+                            <span className="font-mono text-[10px] text-muted-foreground mt-0.5">
+                              {device.mac_address || 'Sin MAC'}
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell>
                           <span className="text-sm">
@@ -452,21 +463,36 @@ export default function InventoryPage() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="deviceId">
-                Device UID <span className="text-red-500">*</span>
+              <Label htmlFor="uid">
+                Device UID
               </Label>
               <Input
-                id="deviceId"
-                placeholder="ej: RPI-001-JALISCO"
-                value={formData.deviceId}
-                onChange={(e) => setFormData({ ...formData, deviceId: e.target.value })}
-                className="font-mono"
-                disabled={submitting || dialogMode === 'edit'} // No editar UID en modo edit
+                id="uid"
+                placeholder="ej: BRIVEX-NODE-001"
+                value={formData.uid}
+                onChange={(e) => setFormData({ ...formData, uid: e.target.value })}
+                className="font-mono uppercase"
+                disabled={submitting}
               />
               <p className="text-xs text-muted-foreground">
-                {dialogMode === 'create' 
-                  ? 'Identificador único del dispositivo (impreso en la etiqueta física)'
-                  : 'El Device UID no puede modificarse después de crearlo'}
+                Identificador único de la etiqueta física del dispositivo.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="mac_address">
+                Dirección MAC <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="mac_address"
+                placeholder="ej: AA:BB:CC:DD:EE:FF"
+                value={formData.mac_address}
+                onChange={(e) => setFormData({ ...formData, mac_address: e.target.value })}
+                className="font-mono uppercase"
+                disabled={submitting}
+              />
+              <p className="text-xs text-muted-foreground">
+                Dirección MAC del módulo Wi-Fi (usada por el backend para telemetría).
               </p>
             </div>
 
@@ -505,7 +531,7 @@ export default function InventoryPage() {
             <Button variant="outline" onClick={closeDialog} disabled={submitting}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} disabled={submitting || !formData.deviceId.trim()}>
+            <Button onClick={handleSubmit} disabled={submitting || (!formData.mac_address?.trim() && !formData.uid?.trim())}>
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

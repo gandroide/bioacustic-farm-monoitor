@@ -1,11 +1,13 @@
 "use client";
 
+export const dynamic = 'force-dynamic';
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getCurrentUserProfile,
   getUserOrganization,
   getSitesByOrganization,
+  getSiteById,
   getBuildingsBySite,
   getRoomsByBuilding,
   getDevicesByRoom,
@@ -51,12 +53,10 @@ import {
   Trash2,
   Settings,
   Save,
-  X,
   CheckCircle2,
   AlertCircle
 } from "lucide-react";
 
-export const dynamic = 'force-dynamic';
 
 interface RoomWithDevices extends Room {
   devices: Device[];
@@ -119,10 +119,19 @@ export default function FarmSettingsPage() {
       setOrganizationName(organization.name);
 
       // Obtener sites de la organización
-      const sites = await getSitesByOrganization(organization.id);
+      let sites = await getSitesByOrganization(organization.id);
+      
+      // FALLBACK DE SEGURIDAD: Si no devuelve nada, forzamos cargar la Granja Coruña
       if (sites.length === 0) {
-        console.error('No sites found');
-        return;
+        console.warn('No sites found for org. Enforcing default site.');
+        const fallbackSite = await getSiteById('deb0f8b5-17d5-432e-af14-3a888216551c');
+        if (fallbackSite) {
+          sites = [fallbackSite];
+        } else {
+          console.error('No fallback site found');
+          setLoading(false);
+          return;
+        }
       }
 
       // Tomar el primer site (o el asignado si es site_manager)
@@ -139,12 +148,15 @@ export default function FarmSettingsPage() {
           
           const roomsWithDevices = await Promise.all(
             rooms.map(async (room) => {
+              console.log(room, "aqui")
               const devices = await getDevicesByRoom(room.id);
               return {
                 ...room,
                 devices: devices.map(d => ({
                   id: d.id,
                   device_id: d.device_id,
+                  uid: d.uid,
+                  mac_address: d.mac_address,
                   room_id: d.room_id,
                   name: d.name,
                   status: d.status,
@@ -550,7 +562,7 @@ export default function FarmSettingsPage() {
                                     </Badge>
                                   </div>
                                   <p className="text-[10px] font-mono text-muted-foreground">
-                                    {device.device_id}
+                                    UID: {device.uid || device.mac_address || device.device_id || 'Sin Identificador'}
                                   </p>
                                 </div>
                               ))}

@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       .from('profiles')
       .select('role')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
     if (!profile || profile.role !== 'super_admin') {
       return NextResponse.json({ error: 'Permisos insuficientes' }, { status: 403 });
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       .from('organizations')
       .select('id, name')
       .eq('id', organizationId)
-      .single();
+      .maybeSingle();
 
     if (orgError || !org) {
       return NextResponse.json(

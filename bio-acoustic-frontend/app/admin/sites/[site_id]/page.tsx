@@ -349,6 +349,42 @@ export default function SiteInspectionPage() {
     }
   };
 
+  const handleSimulateDevice = async (device: Device, action: 'online' | 'offline' | 'alert') => {
+    try {
+      if (action === 'online' || action === 'offline') {
+        const { error } = await supabase
+          .from('devices')
+          .update({
+            status: action,
+            last_heartbeat: action === 'online' ? new Date().toISOString() : device.last_heartbeat,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', device.id);
+        
+        if (error) throw error;
+        showNotification('success', `✅ Dispositivo simulado como ${action}`);
+      } else if (action === 'alert') {
+        const { error } = await supabase
+          .from('acoustic_events')
+          .insert({
+            device_id: device.id,
+            room_id: device.room_id,
+            event_type: 'test_alert',
+            rms_level: 90.0,
+            battery_percentage: 100
+          });
+          
+        if (error) throw error;
+        showNotification('success', '✅ Alerta de prueba generada (RMS: 90.0)');
+      }
+      
+      await fetchSiteData();
+    } catch (error) {
+      console.error('Error simulating device:', error);
+      showNotification('error', '❌ Error al ejecutar simulación');
+    }
+  };
+
   const handleDelete = async (type: 'building' | 'room', id: string, name: string) => {
     if (!confirm(`¿Estás seguro de eliminar este ${type === 'building' ? 'edificio' : 'sala'}?\n\n"${name}"\n\nEsta acción no se puede deshacer.`)) {
       return;
@@ -774,9 +810,30 @@ export default function SiteInspectionPage() {
                                           {online ? 'Online' : 'Offline'}
                                         </span>
                                       </div>
-                                      <Badge variant="outline" className="text-[10px] font-mono">
-                                        {device.status}
-                                      </Badge>
+                                      <div className="flex items-center gap-1">
+                                        <Badge variant="outline" className="text-[10px] font-mono">
+                                          {device.status}
+                                        </Badge>
+                                        
+                                        <DropdownMenu>
+                                          <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                                              <MoreVertical className="h-4 w-4" />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                          <DropdownMenuContent align="end">
+                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'online')}>
+                                              <Activity className="h-4 w-4 mr-2" /> Simular Online
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'offline')}>
+                                              <WifiOff className="h-4 w-4 mr-2" /> Simular Offline
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'alert')}>
+                                              <AlertTriangle className="h-4 w-4 mr-2 text-amber-500" /> Generar Alerta de Prueba
+                                            </DropdownMenuItem>
+                                          </DropdownMenuContent>
+                                        </DropdownMenu>
+                                      </div>
                                     </div>
 
                                     <div className="space-y-1">

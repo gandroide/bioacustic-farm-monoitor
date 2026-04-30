@@ -41,7 +41,8 @@ import {
   AlertCircle,
   Loader2,
   Save,
-  PackagePlus
+  PackagePlus,
+  Wand2
 } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
@@ -104,7 +105,7 @@ export default function InventoryPage() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  const openDialog = (mode: DialogMode, device?: UnassignedDevice) => {
+  const openDialog = async (mode: DialogMode, device?: UnassignedDevice) => {
     setDialogMode(mode);
     if (mode === 'edit' && device) {
       setSelectedDevice(device);
@@ -115,12 +116,45 @@ export default function InventoryPage() {
       });
     } else {
       setSelectedDevice(null);
+      
+      // Auto-generar UID "Zero Memory"
+      let nextUid = "BRIVEX-NODE-001";
+      try {
+        const { data } = await supabase
+          .from('devices')
+          .select('uid')
+          .ilike('uid', 'BRIVEX-NODE-%')
+          .order('uid', { ascending: false })
+          .limit(1);
+          
+        if (data && data.length > 0 && data[0].uid) {
+          const match = data[0].uid.match(/BRIVEX-NODE-(\d+)/);
+          if (match) {
+            const nextNumber = parseInt(match[1]) + 1;
+            nextUid = `BRIVEX-NODE-${nextNumber.toString().padStart(3, '0')}`;
+          }
+        }
+      } catch (error) {
+        console.error("Error auto-generating UID:", error);
+      }
+      
       setFormData({
-        uid: "",
+        uid: nextUid,
         mac_address: "",
         name: ""
       });
     }
+  };
+
+  const generateTestMac = () => {
+    const hexChars = '0123456789ABCDEF';
+    let mac = '';
+    for (let i = 0; i < 6; i++) {
+      mac += hexChars[Math.floor(Math.random() * 16)];
+      mac += hexChars[Math.floor(Math.random() * 16)];
+      if (i < 5) mac += ':';
+    }
+    setFormData(prev => ({ ...prev, mac_address: mac }));
   };
 
   const closeDialog = () => {
@@ -483,14 +517,25 @@ export default function InventoryPage() {
               <Label htmlFor="mac_address">
                 Dirección MAC <span className="text-red-500">*</span>
               </Label>
-              <Input
-                id="mac_address"
-                placeholder="ej: AA:BB:CC:DD:EE:FF"
-                value={formData.mac_address}
-                onChange={(e) => setFormData({ ...formData, mac_address: e.target.value })}
-                className="font-mono uppercase"
-                disabled={submitting}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="mac_address"
+                  placeholder="ej: AA:BB:CC:DD:EE:FF"
+                  value={formData.mac_address}
+                  onChange={(e) => setFormData({ ...formData, mac_address: e.target.value })}
+                  className="font-mono uppercase"
+                  disabled={submitting}
+                />
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={generateTestMac}
+                  disabled={submitting}
+                  title="Generar MAC de Prueba"
+                >
+                  <Wand2 className="h-4 w-4" />
+                </Button>
+              </div>
               <p className="text-xs text-muted-foreground">
                 Dirección MAC del módulo Wi-Fi (usada por el backend para telemetría).
               </p>

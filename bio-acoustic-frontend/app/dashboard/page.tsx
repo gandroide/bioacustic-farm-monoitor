@@ -56,6 +56,8 @@ export default function DashboardPage() {
         .order('created_at', { ascending: false })
         .limit(20);
 
+      let roomIds: string[] = [];
+
       if (profile.assigned_site_id) {
         const { data: buildings } = await supabase
           .from('buildings')
@@ -71,10 +73,45 @@ export default function DashboardPage() {
             .in('building_id', buildingIds);
 
           if (rooms && rooms.length > 0) {
-            const roomIds = rooms.map(r => r.id);
-            query = query.in('room_id', roomIds);
+            roomIds = rooms.map(r => r.id);
           }
         }
+      } else if (organization) {
+        // Org Admin: fetch all rooms for this organization
+        const { data: sites } = await supabase
+          .from('sites')
+          .select('id')
+          .eq('organization_id', organization.id);
+          
+        if (sites && sites.length > 0) {
+          const siteIds = sites.map(s => s.id);
+          const { data: buildings } = await supabase
+            .from('buildings')
+            .select('id')
+            .in('site_id', siteIds);
+            
+          if (buildings && buildings.length > 0) {
+            const buildingIds = buildings.map(b => b.id);
+            const { data: rooms } = await supabase
+              .from('rooms')
+              .select('id')
+              .in('building_id', buildingIds);
+              
+            if (rooms && rooms.length > 0) {
+              roomIds = rooms.map(r => r.id);
+            }
+          }
+        }
+      }
+
+      if (roomIds.length > 0) {
+        query = query.in('room_id', roomIds);
+      } else {
+        // Evitar traer datos ajenos si no hay cuartos en esta org/site
+        setEvents([]);
+        setLoading(false);
+        setRefreshing(false);
+        return;
       }
 
       const { data, error } = await query;

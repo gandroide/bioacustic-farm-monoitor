@@ -366,7 +366,8 @@ export async function createSite(
 export async function inviteUserToOrganization(
   email: string,
   organizationId: string,
-  fullName?: string
+  fullName?: string,
+  password?: string
 ): Promise<{ success: boolean; message: string; error?: string }> {
   try {
     // Obtener el token de sesión actual
@@ -384,7 +385,8 @@ export async function inviteUserToOrganization(
       body: JSON.stringify({
         email,
         organizationId,
-        fullName
+        fullName,
+        password
       })
     })
 

@@ -103,6 +103,7 @@ export default function SiteInspectionPage() {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [events, setEvents] = useState<Event[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [availableDevices, setAvailableDevices] = useState<Device[]>([]);
 
   // Dialog state
   const [dialogState, setDialogState] = useState<DialogState>({ mode: null });
@@ -249,7 +250,7 @@ export default function SiteInspectionPage() {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const openDialog = (mode: DialogMode, data?: Partial<DialogState>) => {
+  const openDialog = async (mode: DialogMode, data?: Partial<DialogState>) => {
     setDialogState({ mode, ...data });
     setFormData({
       name: data?.currentName || "",
@@ -257,6 +258,15 @@ export default function SiteInspectionPage() {
       capacity: "",
       deviceUid: ""
     });
+
+    if (mode === 'claim_device') {
+      const { data: stockDevices } = await supabase
+        .from('devices')
+        .select('*')
+        .is('room_id', null)
+        .order('created_at', { ascending: false });
+      setAvailableDevices(stockDevices || []);
+    }
   };
 
   const closeDialog = () => {
@@ -331,12 +341,16 @@ export default function SiteInspectionPage() {
 
         case 'claim_device':
           if (!dialogState.roomId || !formData.deviceUid) return;
-          const claimed = await claimDeviceToRoom(formData.deviceUid, dialogState.roomId);
-          if (claimed) {
+          const { error: claimError } = await supabase
+            .from('devices')
+            .update({ room_id: dialogState.roomId, updated_at: new Date().toISOString() })
+            .eq('id', formData.deviceUid);
+            
+          if (!claimError) {
             showNotification('success', '✅ Dispositivo vinculado correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Dispositivo no encontrado o error al vincular');
+            showNotification('error', '❌ Error al vincular dispositivo');
           }
           break;
       }
@@ -890,7 +904,7 @@ export default function SiteInspectionPage() {
             <DialogDescription asChild>
               <div>
                 {dialogState.mode === 'claim_device' ? (
-                  <p>Ingresa el UID del dispositivo que deseas vincular a esta sala.</p>
+                  <p>Selecciona un dispositivo disponible en el inventario para vincularlo a esta sala.</p>
                 ) : (
                   <p>Completa los datos para {dialogState.mode?.includes('add') ? 'crear' : 'actualizar'} el elemento.</p>
                 )}
@@ -901,17 +915,35 @@ export default function SiteInspectionPage() {
           <div className="space-y-4 py-4">
             {dialogState.mode === 'claim_device' ? (
               <div className="space-y-2">
-                <Label htmlFor="deviceUid">UID del Dispositivo</Label>
-                <Input
-                  id="deviceUid"
-                  placeholder="ej: RPI-001-JALISCO"
-                  value={formData.deviceUid}
-                  onChange={(e) => setFormData({ ...formData, deviceUid: e.target.value })}
-                  className="font-mono"
-                />
-                <p className="text-xs text-muted-foreground">
-                  El UID se encuentra impreso en la etiqueta del dispositivo
-                </p>
+                <Label htmlFor="deviceUid">Seleccionar Dispositivo (Inventario)</Label>
+                {availableDevices.length === 0 ? (
+                  <div className="text-sm text-muted-foreground border border-dashed border-border p-4 rounded-md bg-muted/30 text-center">
+                    <p className="font-medium text-foreground mb-1">Inventario Vacío</p>
+                    <p>No hay dispositivos disponibles en stock.</p>
+                    <p>Crea uno nuevo en la sección de Inventario.</p>
+                  </div>
+                ) : (
+                  <>
+                    <Select
+                      value={formData.deviceUid}
+                      onValueChange={(value) => setFormData({ ...formData, deviceUid: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecciona un dispositivo..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableDevices.map(d => (
+                          <SelectItem key={d.id} value={d.id}>
+                            {d.name || 'Sin nombre'} ({d.uid || d.mac_address || 'Sin ID'})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Selecciona un dispositivo no asignado para vincularlo a esta sala.
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <>

@@ -79,6 +79,7 @@ export default function AdminPage() {
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteFullName, setInviteFullName] = useState("");
+  const [invitePassword, setInvitePassword] = useState("");
   const [inviting, setInviting] = useState(false);
 
   // Create organization dialog
@@ -156,27 +157,32 @@ export default function AdminPage() {
     setSelectedOrgId(organizationId);
     setInviteEmail("");
     setInviteFullName("");
+    setInvitePassword("");
     setInviteDialogOpen(true);
   };
 
   const handleSendInvite = async () => {
-    if (!inviteEmail || !selectedOrgId) return;
+    if (!inviteEmail || !selectedOrgId || !invitePassword || invitePassword.length < 6) {
+      toast.error('El email y la contraseña temporal (mínimo 6 caracteres) son obligatorios');
+      return;
+    }
 
     setInviting(true);
     try {
-      const result = await inviteUserToOrganization(inviteEmail, selectedOrgId, inviteFullName);
+      const result = await inviteUserToOrganization(inviteEmail, selectedOrgId, inviteFullName, invitePassword);
 
       if (result.success) {
         toast.success(result.message);
         setInviteDialogOpen(false);
         setInviteEmail("");
         setInviteFullName("");
+        setInvitePassword("");
       } else {
-        toast.error(result.error || 'Error al enviar invitación');
+        toast.error(result.error || 'Error al crear la cuenta');
       }
     } catch (error) {
-      console.error('Error sending invite:', error);
-      toast.error('Error al enviar invitación');
+      console.error('Error creating user:', error);
+      toast.error('Error al crear la cuenta');
     } finally {
       setInviting(false);
     }
@@ -413,11 +419,11 @@ export default function AdminPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5 text-primary" />
-              Invitar Admin de Organización
+              Crear Cuenta de Admin
             </DialogTitle>
             <DialogDescription asChild>
               <div>
-                <p>Envía una invitación por email para que el administrador pueda acceder a su organización.</p>
+                <p>Crea una nueva cuenta de administrador para esta organización.</p>
               </div>
             </DialogDescription>
           </DialogHeader>
@@ -452,13 +458,27 @@ export default function AdminPage() {
               />
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="invitePassword">
+                Contraseña Temporal <span className="text-red-500">*</span>
+              </Label>
+              <Input
+                id="invitePassword"
+                type="text"
+                placeholder="Mínimo 6 caracteres"
+                value={invitePassword}
+                onChange={(e) => setInvitePassword(e.target.value)}
+                disabled={inviting}
+              />
+            </div>
+
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
               <div className="flex items-start gap-2">
                 <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5" strokeWidth={2} />
                 <div className="text-xs text-muted-foreground">
-                  <p className="font-semibold text-foreground mb-1">Información importante</p>
+                  <p className="font-semibold text-foreground mb-1">Aprovisionamiento Directo</p>
                   <ul className="list-disc list-inside space-y-1">
-                    <li>El usuario recibirá un email con un link de activación</li>
+                    <li>La cuenta se activará inmediatamente y el admin podrá hacer login con estas credenciales</li>
                     <li>Se le asignará el rol de <strong>Org Admin</strong></li>
                     <li>Tendrá acceso a todos los sites de la organización</li>
                   </ul>
@@ -482,12 +502,12 @@ export default function AdminPage() {
               {inviting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Enviando...
+                  Creando...
                 </>
               ) : (
                 <>
-                  <Mail className="h-4 w-4 mr-2" />
-                  Enviar Invitación
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Crear Admin
                 </>
               )}
             </Button>

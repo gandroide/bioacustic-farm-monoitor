@@ -61,7 +61,7 @@
 
 // --- Interruptor Maestro: Hardware Mocking ---
 // Cambiar a 'true' cuando el módulo Micro SD esté conectado físicamente.
-#define USE_SD_CARD false
+#define USE_SD_CARD true
 
 // =============================================================================
 // CONSTANTES DE CONFIGURACIÓN
@@ -79,11 +79,16 @@ static const size_t PREROLL_SAMPLES = RING_BUF_SAMPLES; // 2s de pre-roll
 // I2S DMA read block size (muestras por lectura)
 static const size_t I2S_READ_SAMPLES = 512;
 
+// I2S shift: el INMP441 entrega datos en bits altos de la palabra de 32 bits.
+// >> 14 da buena dinámica sin clipping; bajar a 12-13 para más volumen.
+static const uint8_t I2S_SHIFT = 14;
+
 // FFT (para metadatos del dataset, NO como trigger)
 static const uint16_t FFT_SAMPLES = 1024; // Debe ser potencia de 2
 
 // Bloque de análisis RMS + FFT
-static const uint16_t RMS_BLOCK_SAMPLES = FFT_SAMPLES; // Mismo tamaño para reusar buffer
+static const uint16_t RMS_BLOCK_SAMPLES =
+    FFT_SAMPLES; // Mismo tamaño para reusar buffer
 
 // --- Umbral RMS para trigger de alerta ---
 static const float THRESHOLD_RMS = 500.0f; // Ajustar según ambiente real
@@ -95,10 +100,10 @@ static volatile float RMS_FACTOR = RMS_FACTOR_SENSITIVE;
 // Baseline rodante: suavizado exponencial
 static const float BASELINE_ALPHA = 0.02f;
 
-// --- Grabación: 5 segundos total (2s pre-roll + 3s live) ---
-static const uint32_t RECORD_TOTAL_SECONDS = 5;
+// --- Grabación: 8 segundos total (2s pre-roll + 6s live) ---
+static const uint32_t RECORD_TOTAL_SECONDS = 8;
 static const uint32_t PREROLL_SECONDS = 2;
-static const uint32_t LIVE_SECONDS = 3;
+static const uint32_t LIVE_SECONDS = 6;
 static const uint32_t RECORD_BYTES =
     SAMPLE_RATE * (BITS_PER_SAMPLE / 8) * NUM_CHANNELS * RECORD_TOTAL_SECONDS;
 static const uint32_t LIVE_BYTES =
@@ -107,6 +112,16 @@ static const size_t SD_WRITE_BUF = 4096; // 4 KB por escritura a SD
 
 // --- Muestreo Ambiental Periódico ---
 static const uint32_t ENV_INTERVAL_MS = 1800000; // 30 minutos en ms
+
+// --- Anti-bucle: warmup al boot y cooldown post-grabación ---
+// Durante estos periodos no se permite disparar grabaciones; el baseline
+// sí sigue actualizándose para estabilizarse.
+static const uint32_t WARMUP_MS = 10000;  // 10 s tras boot
+static const uint32_t COOLDOWN_MS = 5000; // 5 s tras cada grabación
+
+// --- SD llena: margen mínimo libre antes de pausar grabaciones ---
+static const uint64_t SD_FULL_THRESHOLD_BYTES = 50ULL * 1024 * 1024; // 50 MB
+static const uint32_t SD_CHECK_INTERVAL_MS = 30000; // cada 30 s
 
 // --- LEDs ---
 static const uint8_t LED_BRILLO = 127; // PWM 50%
@@ -124,7 +139,9 @@ typedef enum {
   STATE_MONITORING, // Operación normal — Verde heartbeat
   STATE_RECORDING,  // Grabando audio + CSV — Amarillo fijo
   STATE_ERROR,      // Fallo crítico — Rojo parpadeo rápido
-  STATE_PAIRING     // Modo emparejamiento — Todos parpadean
+  STATE_PAIRING,    // Modo emparejamiento — Todos parpadean
+  STATE_SD_FULL,    // SD sin espacio — Rojo+Amarillo alternados a 1 Hz
+  STATE_PAUSED      // Safe Eject — SD desmontada, Verde+Amarillo fijos
 } SystemState_t;
 
 // =============================================================================
@@ -139,6 +156,10 @@ static int16_t ringBuffer[RING_BUF_SAMPLES];
 static volatile size_t rbWriteIdx = 0;
 static volatile size_t rbReadIdx = 0;
 static SemaphoreHandle_t rbMutex = NULL;
+
+// Snapshot del pre-roll: se copia bajo mutex al inicio de cada grabación
+// para evitar que Core 0 sobrescriba los samples mientras los escribimos a SD.
+static int16_t prerollSnapshot[PREROLL_SAMPLES];
 
 // Contador de eventos (archivos grabados)
 static uint32_t eventCounter = 0;
@@ -157,6 +178,10 @@ static float lastBaseline = 0.0f;
 
 // Timer para muestreo ambiental periódico (millis-based, non-blocking)
 static uint32_t lastEnvCaptureMs = 0;
+
+// Timestamps para warmup (tras boot) y cooldown (tras cada grabación)
+static uint32_t bootTimeMs = 0;
+static uint32_t lastRecordingEndMs = 0;
 
 // Handle de tareas
 static TaskHandle_t captureTaskHandle = NULL;
@@ -248,10 +273,12 @@ static size_t rb_snapshot(int16_t *dest, size_t maxSamples) {
 static bool initI2S() {
   Serial.println("[...] Inicializando I2S (INMP441)...");
 
+  // INMP441 es un mic I2S de 24-bit; se lee como 32-bit y se convierte
+  // a 16-bit por software (shift >> I2S_SHIFT) para reducir ruido de fondo.
   i2s_config_t i2s_config = {.mode =
                                  (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
                              .sample_rate = SAMPLE_RATE,
-                             .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+                             .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
                              .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
                              .communication_format = I2S_COMM_FORMAT_STAND_I2S,
                              .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
@@ -278,7 +305,7 @@ static bool initI2S() {
     return false;
   }
 
-  Serial.println("[OK] I2S configurado (16-bit, 16kHz, mono).");
+  Serial.println("[OK] I2S configurado (32-bit→16-bit, 16kHz, mono).");
   return true;
 }
 
@@ -359,35 +386,89 @@ static String getMACAddress() {
  * @param isEnv true = captura ambiental, false = alerta RMS
  * @param rmsValue Valor RMS actual para incluir en el nombre
  */
-static void buildFilename(char *dest, size_t destLen, bool isEnv, float rmsValue) {
+static void buildFilename(char *dest, size_t destLen, bool isEnv,
+                          float rmsValue) {
   uint32_t uptimeSec = millis() / 1000;
-  // Formatear RMS con 1 decimal, reemplazando '.' por '-' para compatibilidad FAT32
+  // Formatear RMS con 1 decimal, reemplazando '.' por '-' para compatibilidad
+  // FAT32
   int rmsInt = (int)rmsValue;
   int rmsDec = (int)((rmsValue - rmsInt) * 10);
-  if (rmsDec < 0) rmsDec = -rmsDec;
+  if (rmsDec < 0)
+    rmsDec = -rmsDec;
   if (isEnv) {
-    snprintf(dest, destLen, "/ENV_%lu_RMS%d-%d.wav",
-             (unsigned long)uptimeSec, rmsInt, rmsDec);
+    snprintf(dest, destLen, "/ENV_%lu_RMS%d-%d.wav", (unsigned long)uptimeSec,
+             rmsInt, rmsDec);
   } else {
-    snprintf(dest, destLen, "/REC_%lu_RMS%d-%d.wav",
-             (unsigned long)uptimeSec, rmsInt, rmsDec);
+    snprintf(dest, destLen, "/REC_%lu_RMS%d-%d.wav", (unsigned long)uptimeSec,
+             rmsInt, rmsDec);
   }
 }
 
 /**
- * @brief Graba 5 segundos de audio: 2s pre-roll del Ring Buffer + 3s live I2S.
+ * @brief Escribe la cabecera WAV (RIFF) de 44 bytes en el archivo.
+ * @param file Referencia al objeto File de la SD.
+ * @param dataSize Tamaño total de los datos PCM en bytes.
+ */
+static void writeWavHeader(File &file, uint32_t dataSize) {
+  uint32_t totalFileSize = dataSize + 44 - 8;
+  uint32_t byteRate = SAMPLE_RATE * NUM_CHANNELS * (BITS_PER_SAMPLE / 8);
+  uint16_t blockAlign = NUM_CHANNELS * (BITS_PER_SAMPLE / 8);
+
+  file.write((const uint8_t *)"RIFF", 4);
+  file.write((const uint8_t *)&totalFileSize, 4);
+  file.write((const uint8_t *)"WAVE", 4);
+  file.write((const uint8_t *)"fmt ", 4);
+  uint32_t fmtSize = 16;
+  file.write((const uint8_t *)&fmtSize, 4);
+  uint16_t audioFormat = 1; // PCM
+  file.write((const uint8_t *)&audioFormat, 2);
+  uint16_t numChannels = NUM_CHANNELS;
+  file.write((const uint8_t *)&numChannels, 2);
+  uint32_t sampleRate = SAMPLE_RATE;
+  file.write((const uint8_t *)&sampleRate, 4);
+  file.write((const uint8_t *)&byteRate, 4);
+  file.write((const uint8_t *)&blockAlign, 2);
+  uint16_t bitsPerSample = BITS_PER_SAMPLE;
+  file.write((const uint8_t *)&bitsPerSample, 2);
+  file.write((const uint8_t *)"data", 4);
+  file.write((const uint8_t *)&dataSize, 4);
+}
+
+/**
+ * @brief Indica si la SD tiene menos de SD_FULL_THRESHOLD_BYTES libres.
+ *        Cuando USE_SD_CARD=false siempre devuelve false (modo mock).
+ */
+static bool isSDFull() {
+#if USE_SD_CARD
+  uint64_t total = SD.totalBytes();
+  uint64_t used = SD.usedBytes();
+  if (total <= used)
+    return true;
+  return (total - used) < SD_FULL_THRESHOLD_BYTES;
+#else
+  return false;
+#endif
+}
+
+/**
+ * @brief Graba 8 segundos de audio: 2s pre-roll del Ring Buffer + 6s live I2S.
  *        Escribe en chunks para evitar perder muestras.
  * @param isEnv true si es captura ambiental periódica
- * @param currentRMS Valor RMS actual para el nombre del archivo
+ * @param currentRMS Valor RMS para logging
+ * @param filename Nombre del archivo (ya construido por el caller para que
+ *        coincida con el registrado en el CSV)
  * @return true si la grabación fue exitosa
  */
-static bool recordWavToSD(bool isEnv, float currentRMS) {
+static bool recordWavToSD(bool isEnv, float currentRMS, const char *filename) {
 #if USE_SD_CARD
-  eventCounter++;
+  // Last-mile check: si la SD se llenó entre chequeos periódicos, abortar.
+  if (isSDFull()) {
+    Serial.println("[REC] Abortado: SD sin espacio suficiente.");
+    systemState = STATE_SD_FULL;
+    return false;
+  }
 
-  // Generar nombre dinámico
-  char filename[48];
-  buildFilename(filename, sizeof(filename), isEnv, currentRMS);
+  eventCounter++;
 
   Serial.printf("[REC] Iniciando: %s (%s, %us)...\n", filename,
                 isEnv ? "ENV" : "ALERTA", RECORD_TOTAL_SECONDS);
@@ -405,38 +486,33 @@ static bool recordWavToSD(bool isEnv, float currentRMS) {
   uint32_t totalBytesWritten = 0;
 
   // === FASE 1: Volcar 2s de pre-roll desde el Ring Buffer ===
-  // Leemos en chunks de SD_WRITE_BUF/2 muestras para no saturar la SD
+  // Copiamos TODO el pre-roll a un buffer estático bajo mutex para aislarlo
+  // del Core 0 antes de escribir a SD. Tarda ~1-2 ms (memcpy en SRAM).
   const size_t chunkSamples = SD_WRITE_BUF / sizeof(int16_t); // 2048 muestras
   int16_t sdBuf[SD_WRITE_BUF / sizeof(int16_t)];
 
-  // Copiar snapshot del ring buffer (no-destructivo, Core 0 sigue escribiendo)
-  // Procesamos directamente desde el ring buffer en chunks
-  size_t prerollRemaining = PREROLL_SAMPLES;
-  size_t prerollOffset = 0;
-
-  // Tomar snapshot de la posición actual del ring buffer
   xSemaphoreTake(rbMutex, portMAX_DELAY);
   size_t snapAvail = rb_available();
+  size_t samplesToWrite =
+      (snapAvail < PREROLL_SAMPLES) ? snapAvail : PREROLL_SAMPLES;
   size_t snapStart = rbReadIdx;
-  // Avanzar read index para "consumir" el pre-roll
-  rbReadIdx = rbWriteIdx;
+  for (size_t i = 0; i < samplesToWrite; i++) {
+    prerollSnapshot[i] = ringBuffer[(snapStart + i) % RING_BUF_SAMPLES];
+  }
+  // Consumir solo lo que realmente copiamos
+  rbReadIdx = (snapStart + samplesToWrite) % RING_BUF_SAMPLES;
   xSemaphoreGive(rbMutex);
 
-  size_t samplesToWrite = (snapAvail < PREROLL_SAMPLES) ? snapAvail : PREROLL_SAMPLES;
-  size_t snapIdx = snapStart;
-
+  // Escribir el snapshot a SD en chunks (sin mutex, ya está aislado en RAM)
+  size_t prerollOffset = 0;
   while (prerollOffset < samplesToWrite) {
     size_t thisChunk = chunkSamples;
     if (prerollOffset + thisChunk > samplesToWrite)
       thisChunk = samplesToWrite - prerollOffset;
 
-    // Copiar desde ring buffer (sin mutex, datos ya "consumidos")
-    for (size_t i = 0; i < thisChunk; i++) {
-      sdBuf[i] = ringBuffer[(snapStart + prerollOffset + i) % RING_BUF_SAMPLES];
-    }
-
     size_t bytesToWrite = thisChunk * sizeof(int16_t);
-    size_t written = wavFile.write((const uint8_t *)sdBuf, bytesToWrite);
+    size_t written = wavFile.write((const uint8_t *)&prerollSnapshot[prerollOffset],
+                                   bytesToWrite);
     totalBytesWritten += written;
     prerollOffset += thisChunk;
 
@@ -449,28 +525,36 @@ static bool recordWavToSD(bool isEnv, float currentRMS) {
   Serial.printf("[REC] Pre-roll: %lu bytes escritos\n",
                 (unsigned long)totalBytesWritten);
 
-  // === FASE 2: Grabar 3s en tiempo real desde I2S ===
+  // === FASE 2: Grabar los segundos restantes en tiempo real desde I2S ===
+  // El I2S entrega 32-bit; se convierte a 16-bit por software con shift.
+  static int32_t i2sBuf32[SD_WRITE_BUF / sizeof(int16_t)]; // 2048 muestras
   size_t bytesRead = 0;
-  uint32_t liveBytesTarget = LIVE_BYTES;
-  // Ajustar si el pre-roll fue menor de lo esperado
-  uint32_t actualPrerollBytes = totalBytesWritten;
-  liveBytesTarget = RECORD_BYTES - actualPrerollBytes;
-
+  uint32_t liveBytesTarget = RECORD_BYTES - totalBytesWritten;
   uint32_t liveWritten = 0;
-  while (liveWritten < liveBytesTarget) {
-    size_t bytesToRead = SD_WRITE_BUF;
-    if (liveWritten + bytesToRead > liveBytesTarget)
-      bytesToRead = liveBytesTarget - liveWritten;
 
-    esp_err_t err = i2s_read(I2S_PORT, sdBuf, bytesToRead,
-                             &bytesRead, pdMS_TO_TICKS(1000));
+  while (liveWritten < liveBytesTarget) {
+    size_t samplesThisRound = chunkSamples;
+    size_t bytesRemaining = liveBytesTarget - liveWritten;
+    size_t samplesRemaining = bytesRemaining / sizeof(int16_t);
+    if (samplesThisRound > samplesRemaining)
+      samplesThisRound = samplesRemaining;
+
+    size_t bytesToReadI2S = samplesThisRound * sizeof(int32_t);
+    esp_err_t err = i2s_read(I2S_PORT, i2sBuf32, bytesToReadI2S, &bytesRead,
+                             pdMS_TO_TICKS(1000));
     if (err != ESP_OK || bytesRead == 0) {
       Serial.println("[ERROR] Fallo I2S durante grabación live.");
       break;
     }
 
-    size_t written = wavFile.write((const uint8_t *)sdBuf, bytesRead);
-    if (written != bytesRead) {
+    size_t samplesRead = bytesRead / sizeof(int32_t);
+    for (size_t i = 0; i < samplesRead; i++) {
+      sdBuf[i] = (int16_t)(i2sBuf32[i] >> I2S_SHIFT);
+    }
+
+    size_t bytesToWriteSD = samplesRead * sizeof(int16_t);
+    size_t written = wavFile.write((const uint8_t *)sdBuf, bytesToWriteSD);
+    if (written != bytesToWriteSD) {
       Serial.println("[ERROR] Escritura incompleta (live).");
       break;
     }
@@ -485,13 +569,11 @@ static bool recordWavToSD(bool isEnv, float currentRMS) {
   return (totalBytesWritten >= RECORD_BYTES);
 #else
   // --- MOCK: Simular grabación sin hardware SD ---
+  (void)currentRMS;
   eventCounter++;
-  char filename[48];
-  buildFilename(filename, sizeof(filename), isEnv, currentRMS);
   Serial.printf("[MOCK] Simulando %s (%s, %us)...\n", filename,
                 isEnv ? "ENV" : "ALERTA", RECORD_TOTAL_SECONDS);
-  // Simular el tiempo de grabación (5s)
-  vTaskDelay(pdMS_TO_TICKS(5000));
+  vTaskDelay(pdMS_TO_TICKS(RECORD_TOTAL_SECONDS * 1000));
   Serial.printf("[MOCK] Grabación simulada completada: %s\n", filename);
   return true;
 #endif
@@ -516,17 +598,18 @@ static void writeEventCSV(const char *wavFilename, bool isEnv) {
   }
 
   if (!fileExists) {
-    csvFile.println("Archivo,Tipo,MAC,Uptime_ms,Evento,Baseline_RMS,Pico_RMS,Freq_Dom_Hz,Temp_C");
+    csvFile.println("Archivo,Tipo,MAC,Uptime_ms,Evento,Baseline_RMS,Pico_RMS,"
+                    "Freq_Dom_Hz,Temp_C");
   }
 
   String mac = getMACAddress();
   unsigned long uptime = millis();
   float tempC = temperatureRead();
 
-  csvFile.printf("%s,%s,%s,%lu,%lu,%.1f,%.1f,%.1f,%.1f\n",
-                 wavFilename, isEnv ? "ENV" : "REC", mac.c_str(),
-                 uptime, (unsigned long)eventCounter, lastBaseline,
-                 lastPeakRMS, lastFreqHz, tempC);
+  csvFile.printf("%s,%s,%s,%lu,%lu,%.1f,%.1f,%.1f,%.1f\n", wavFilename,
+                 isEnv ? "ENV" : "REC", mac.c_str(), uptime,
+                 (unsigned long)eventCounter, lastBaseline, lastPeakRMS,
+                 lastFreqHz, tempC);
 
   csvFile.close();
   Serial.printf("[CSV] Evento #%lu registrado\n", (unsigned long)eventCounter);
@@ -549,17 +632,21 @@ static void writeEventCSV(const char *wavFilename, bool isEnv) {
 // =============================================================================
 
 static void audioCaptureTask(void *param) {
-  int16_t readBuf[I2S_READ_SAMPLES];
+  int32_t readBuf32[I2S_READ_SAMPLES];
+  int16_t readBuf16[I2S_READ_SAMPLES];
   size_t bytesRead = 0;
 
   Serial.println("[Core 0] Tarea de captura I2S iniciada.");
 
   for (;;) {
-    esp_err_t err =
-        i2s_read(I2S_PORT, readBuf, sizeof(readBuf), &bytesRead, portMAX_DELAY);
+    esp_err_t err = i2s_read(I2S_PORT, readBuf32, sizeof(readBuf32), &bytesRead,
+                             portMAX_DELAY);
     if (err == ESP_OK && bytesRead > 0) {
-      size_t samplesRead = bytesRead / sizeof(int16_t);
-      rb_write(readBuf, samplesRead);
+      size_t samplesRead = bytesRead / sizeof(int32_t);
+      for (size_t i = 0; i < samplesRead; i++) {
+        readBuf16[i] = (int16_t)(readBuf32[i] >> I2S_SHIFT);
+      }
+      rb_write(readBuf16, samplesRead);
     }
     // Yield mínimo para que el watchdog no se dispare
     taskYIELD();
@@ -618,7 +705,8 @@ static void audioAnalysisTask(void *param) {
       rmsBaseline = rms;
       baselineInitialized = true;
     } else {
-      rmsBaseline = BASELINE_ALPHA * rms + (1.0f - BASELINE_ALPHA) * rmsBaseline;
+      rmsBaseline =
+          BASELINE_ALPHA * rms + (1.0f - BASELINE_ALPHA) * rmsBaseline;
     }
 
     // === 3. FFT → Frecuencia Dominante (metadatos para ML, NO trigger) ===
@@ -638,7 +726,8 @@ static void audioAnalysisTask(void *param) {
         maxBin = i;
       }
     }
-    float freqDominant = (float)maxBin * (float)SAMPLE_RATE / (float)FFT_SAMPLES;
+    float freqDominant =
+        (float)maxBin * (float)SAMPLE_RATE / (float)FFT_SAMPLES;
     lastFreqHz = freqDominant;
 
     // === 4. Telemetría periódica (~500ms) ===
@@ -647,14 +736,37 @@ static void audioAnalysisTask(void *param) {
     if (printCounter >= 8) {
       printCounter = 0;
       float threshold = rmsBaseline * RMS_FACTOR;
-      if (threshold < THRESHOLD_RMS) threshold = THRESHOLD_RMS;
-      uint32_t nextEnvSec = (ENV_INTERVAL_MS - (millis() - lastEnvCaptureMs)) / 1000;
-      Serial.printf("RMS: %.0f | Base: %.0f | Freq: %.0f Hz | Thr: %.0f | NextENV: %lus | %s\n",
-                    rms, rmsBaseline, freqDominant, threshold, (unsigned long)nextEnvSec,
+      if (threshold < THRESHOLD_RMS)
+        threshold = THRESHOLD_RMS;
+      uint32_t nextEnvSec =
+          (ENV_INTERVAL_MS - (millis() - lastEnvCaptureMs)) / 1000;
+      Serial.printf("RMS: %.0f | Base: %.0f | Freq: %.0f Hz | Thr: %.0f | "
+                    "NextENV: %lus | %s\n",
+                    rms, rmsBaseline, freqDominant, threshold,
+                    (unsigned long)nextEnvSec,
                     (systemState == STATE_MONITORING)  ? "MONITOR"
                     : (systemState == STATE_RECORDING) ? "REC"
                     : (systemState == STATE_ERROR)     ? "ERROR"
+                    : (systemState == STATE_SD_FULL)   ? "SD_FULL"
+                    : (systemState == STATE_PAUSED)    ? "PAUSED"
                                                        : "PAIRING");
+    }
+
+    // === Chequeo periódico de espacio en SD ===
+    // Solo aplicable en MONITORING/SD_FULL. En PAUSED la SD está desmontada
+    // (los reads darían 0) y en ERROR/RECORDING no tiene sentido pisarlo.
+    static uint32_t lastSDCheckMs = 0;
+    if ((millis() - lastSDCheckMs >= SD_CHECK_INTERVAL_MS) &&
+        (systemState == STATE_MONITORING || systemState == STATE_SD_FULL)) {
+      lastSDCheckMs = millis();
+      bool full = isSDFull();
+      if (full && systemState == STATE_MONITORING) {
+        Serial.println("[SD] SD casi llena → STATE_SD_FULL");
+        systemState = STATE_SD_FULL;
+      } else if (!full && systemState == STATE_SD_FULL) {
+        Serial.println("[SD] Espacio libre detectado → STATE_MONITORING");
+        systemState = STATE_MONITORING;
+      }
     }
 
     // No disparar si no estamos monitoreando
@@ -663,9 +775,19 @@ static void audioAnalysisTask(void *param) {
       continue;
     }
 
+    // === Anti-bucle: warmup tras boot y cooldown tras cada grabación ===
+    // El baseline ya se actualizó arriba; aquí solo bloqueamos triggers.
+    bool inWarmup = (millis() - bootTimeMs) < WARMUP_MS;
+    bool inCooldown = (lastRecordingEndMs != 0) &&
+                      ((millis() - lastRecordingEndMs) < COOLDOWN_MS);
+    if (inWarmup || inCooldown) {
+      continue;
+    }
+
     // === 5. Trigger por RMS (Alerta) — FFT NO participa en el trigger ===
     float threshold = rmsBaseline * RMS_FACTOR;
-    if (threshold < THRESHOLD_RMS) threshold = THRESHOLD_RMS;
+    if (threshold < THRESHOLD_RMS)
+      threshold = THRESHOLD_RMS;
 
     bool rmsTriggered = (rms > threshold);
 
@@ -691,13 +813,15 @@ static void audioAnalysisTask(void *param) {
       lastBaseline = rmsBaseline;
       systemState = STATE_RECORDING;
 
-      bool ok = recordWavToSD(isEnv, rms);
+      // Construir el nombre UNA SOLA VEZ y reusarlo en disco y en el CSV
+      // (antes se generaba dos veces, con uptimes distintos → mismatch).
+      char filename[48];
+      buildFilename(filename, sizeof(filename), isEnv, rms);
+
+      bool ok = recordWavToSD(isEnv, rms, filename);
 
       if (ok) {
-        // Generar nombre para CSV
-        char csvFilename[48];
-        buildFilename(csvFilename, sizeof(csvFilename), isEnv, rms);
-        writeEventCSV(csvFilename, isEnv);
+        writeEventCSV(filename, isEnv);
 
         // Resetear ring buffer post-grabación
         xSemaphoreTake(rbMutex, portMAX_DELAY);
@@ -705,8 +829,10 @@ static void audioAnalysisTask(void *param) {
         rbReadIdx = 0;
         xSemaphoreGive(rbMutex);
 
+        lastRecordingEndMs = millis();
         systemState = STATE_MONITORING;
-        Serial.println("[OK] Volviendo a modo MONITOREO.\n");
+        Serial.printf("[OK] Volviendo a MONITOREO (cooldown %lus).\n",
+                      (unsigned long)(COOLDOWN_MS / 1000));
       } else {
         Serial.println("[ERROR] Grabación falló. LED ROJO 5s...");
         systemState = STATE_ERROR;
@@ -717,6 +843,7 @@ static void audioAnalysisTask(void *param) {
         rbReadIdx = 0;
         xSemaphoreGive(rbMutex);
 
+        lastRecordingEndMs = millis();
         systemState = STATE_MONITORING;
         Serial.println("[RECOVERY] Volviendo a MONITOREO.\n");
       }
@@ -786,6 +913,26 @@ static void ledTask(void *param) {
         analogWrite(RED_LED, val);
         lastToggle = now;
       }
+      break;
+
+    case STATE_SD_FULL:
+      // Rojo + Amarillo alternados a 1 Hz (500 ms cada uno)
+      analogWrite(GREEN_LED, 0);
+      if ((now - lastToggle) >= 500) {
+        ledOn = !ledOn;
+        analogWrite(RED_LED, ledOn ? LED_BRILLO : 0);
+        analogWrite(YELLOW_LED, ledOn ? 0 : LED_BRILLO);
+        lastToggle = now;
+      }
+      break;
+
+    case STATE_PAUSED:
+      // Verde + Amarillo simultáneos fijos: "SD libre, puedes extraerla"
+      analogWrite(GREEN_LED, LED_BRILLO);
+      analogWrite(YELLOW_LED, LED_BRILLO);
+      analogWrite(RED_LED, 0);
+      lastToggle = now;
+      ledOn = false;
       break;
     }
 
@@ -861,71 +1008,43 @@ static void buttonTask(void *param) {
           uint32_t durationMs = (now - pressStartTick) * portTICK_PERIOD_MS;
 
           // ============================================================
-          // CLIC CORTO (< 1 segundo): Health Check
+          // CLIC CORTO (< 1 segundo): Safe Eject Mode (toggle PAUSED)
           // ============================================================
           if (durationMs < BTN_SHORT_MAX_MS) {
-            Serial.printf(
-                "[BTN] Clic corto detectado (%lu ms) → Health Check\n",
-                (unsigned long)durationMs);
+            Serial.printf("[BTN] Clic corto detectado (%lu ms)\n",
+                          (unsigned long)durationMs);
 
-            // Pausar monitoreo de audio durante el chequeo
-            SystemState_t previousState = systemState;
-            systemState =
-                STATE_PAIRING; // Estado temporal (todos LEDs parpadean)
-
-            // Pequeña pausa para que el sistema registre el cambio
-            vTaskDelay(pdMS_TO_TICKS(200));
-
-            // Apagar todos los LEDs antes de la secuencia
-            analogWrite(GREEN_LED, 0);
-            analogWrite(YELLOW_LED, 0);
-            analogWrite(RED_LED, 0);
-
+            if (systemState == STATE_RECORDING) {
+              Serial.println(
+                  "[BTN] Ignorado: grabación en curso. Espera y reintenta.");
+            } else if (systemState == STATE_PAUSED) {
+              // Reanudar: remontar la SD y volver a MONITORING
+              Serial.println("[BTN] Reanudando: remontando SD...");
 #if USE_SD_CARD
-            // Verificar si la SD sigue montada intentando abrir un archivo test
-            bool sdOk = false;
-            File testFile = SD.open("/_health_check.tmp", FILE_WRITE);
-            if (testFile) {
-              testFile.close();
-              SD.remove("/_health_check.tmp");
-              sdOk = true;
-            }
-
-            if (sdOk) {
-              Serial.println("[BTN] ✓ Health Check: SD OK → Verde ×3");
-              // Parpadear LED verde 3 veces
-              for (int i = 0; i < 3; i++) {
-                analogWrite(GREEN_LED, LED_BRILLO);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                analogWrite(GREEN_LED, 0);
-                vTaskDelay(pdMS_TO_TICKS(200));
+              SPI.begin(SPI_SCK_PIN, SPI_MISO, SPI_MOSI, SD_CS);
+              if (!SD.begin(SD_CS, SPI)) {
+                Serial.println(
+                    "[BTN] [ERROR] No se pudo remontar la SD → STATE_ERROR.");
+                systemState = STATE_ERROR;
+              } else {
+                Serial.println("[BTN] SD remontada OK → STATE_MONITORING.");
+                lastRecordingEndMs = millis(); // cooldown post-reanudación
+                systemState = STATE_MONITORING;
               }
-            } else {
-              Serial.println("[BTN] ✗ Health Check: SD FALLO → Rojo ×3");
-              // Parpadear LED rojo 3 veces
-              for (int i = 0; i < 3; i++) {
-                analogWrite(RED_LED, LED_BRILLO);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                analogWrite(RED_LED, 0);
-                vTaskDelay(pdMS_TO_TICKS(200));
-              }
-            }
 #else
-            // Sin SD: siempre reportar OK (mock)
-            Serial.println(
-                "[BTN] ✓ Health Check (mock, SD deshabilitada) → Verde ×3");
-            for (int i = 0; i < 3; i++) {
-              analogWrite(GREEN_LED, LED_BRILLO);
-              vTaskDelay(pdMS_TO_TICKS(200));
-              analogWrite(GREEN_LED, 0);
-              vTaskDelay(pdMS_TO_TICKS(200));
-            }
+              systemState = STATE_MONITORING;
+              Serial.println("[BTN] (mock) Reanudado → STATE_MONITORING.");
 #endif
-
-            // Restaurar estado de monitoreo
-            systemState = STATE_MONITORING;
-            Serial.println(
-                "[BTN] Health Check completado. Volviendo a MONITOREO.");
+            } else {
+              // Entrar en PAUSED: desmontar SD para extracción segura
+              Serial.println("[BTN] Pausando para extracción segura...");
+#if USE_SD_CARD
+              SD.end();
+              Serial.println(
+                  "[BTN] SD desmontada. Puedes extraerla con seguridad.");
+#endif
+              systemState = STATE_PAUSED;
+            }
           }
           // Else: duración entre 1s y 3s → sin acción (zona muerta)
         }
@@ -953,7 +1072,6 @@ static void buttonTask(void *param) {
           Serial.println("============================================");
 
           // Pausar monitoreo y encender LED amarillo 2 s como confirmación
-          SystemState_t previousState = systemState;
           systemState = STATE_PAIRING; // Evitar que ledTask interfiera
 
           // Apagar todos y encender amarillo
@@ -1035,17 +1153,26 @@ void setup() {
   Serial.println("--- Configuración del Recolector ---");
   Serial.printf("  RMS Threshold: %.0f (mínimo absoluto)\n", THRESHOLD_RMS);
   Serial.printf("  RMS Factor:    %.1fx sobre baseline\n", RMS_FACTOR);
-  Serial.printf("  Grabación:     %us total (2s pre-roll + 3s live)\n",
-                RECORD_TOTAL_SECONDS);
+  Serial.printf("  Grabación:     %us total (%lus pre-roll + %lus live)\n",
+                RECORD_TOTAL_SECONDS, (unsigned long)PREROLL_SECONDS,
+                (unsigned long)LIVE_SECONDS);
   Serial.printf("  ENV Interval:  %lu min\n",
                 (unsigned long)(ENV_INTERVAL_MS / 60000));
-  Serial.printf("  Ring Buffer:   %u muestras (%u KB)\n",
-                RING_BUF_SAMPLES, (RING_BUF_SAMPLES * 2) / 1024);
+  Serial.printf("  Warmup:        %lus | Cooldown: %lus\n",
+                (unsigned long)(WARMUP_MS / 1000),
+                (unsigned long)(COOLDOWN_MS / 1000));
+  Serial.printf("  SD Full Thr:   %llu MB libres mínimo\n",
+                SD_FULL_THRESHOLD_BYTES / (1024ULL * 1024ULL));
+  Serial.printf("  I2S:           32-bit→16-bit (shift >> %u)\n", I2S_SHIFT);
+  Serial.printf("  Ring Buffer:   %u muestras (%u KB)\n", RING_BUF_SAMPLES,
+                (RING_BUF_SAMPLES * 2) / 1024);
   Serial.printf("  FFT:           %u bins (%.1f Hz/bin) — solo metadatos\n",
                 FFT_SAMPLES, (float)SAMPLE_RATE / FFT_SAMPLES);
   Serial.println("------------------------------------\n");
 
   // === Lanzar tareas FreeRTOS ===
+
+  bootTimeMs = millis(); // arranque del warmup anti-bucle
 
   // Core 0: Captura I2S (prioridad alta)
   // Solo se lanza si el hardware está OK

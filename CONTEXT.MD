@@ -1,13 +1,13 @@
 # 🐷 ONTIVEROS BIO-ALERT — Master Context
 
 > **Fuente de la verdad** para Arquitectura, Hardware, Frontend y Reglas de Negocio.
-> Última actualización: 2026-04-28 (v4.0 — Limpieza Monorepo, Smart Button, FFT)
+> Última actualización: 2026-05-19 (v5.0 — Dataset Builder, I2S 32-bit, Warmup/Cooldown, SD_FULL)
 
 ---
 
 ## 1. Identidad y Arquitectura Global
 
-* **Objetivo:** Sistema de monitoreo bioacústico para granjas porcinas que detecta aplastamiento de lechones (chillidos) mediante procesamiento local (FFT/RMS/ZCR) y alerta al granjero en tiempo real vía SaaS.
+* **Objetivo:** Plataforma de monitoreo bioacústico para granjas porcinas. La **fase actual** del firmware es de **Dataset Builder para Edge AI/ML**: recolectar audio en el borde sobre eventos disparados por RMS + capturas ambientales periódicas, etiquetarlo, y entrenar un modelo que más adelante correrá en el propio ESP32-S3 para detectar estrés porcino (p. ej. aplastamiento de lechones) y alertar vía el SaaS multi-tenant.
 * **Estructura Monorepo:**
   * **`/bio-acoustic-frontend`:** Frontend SaaS en Next.js 14 (Cloud).
   * **`/firmware/bio-acoustic-health`:** Nodo principal — Monitoreo de audio (Edge). **ACTIVO.**
@@ -48,10 +48,10 @@
 
 ### 4.1 Plataforma
 
-* **MCU:** ESP32-S3-DevKitC-1 programado en C++ usando PlatformIO y framework Arduino.
+* **MCU:** ESP32-S3-DevKitC-1 (320 KB SRAM, 8 MB Flash) programado en C++ usando PlatformIO y framework Arduino.
 * **Arquitectura:** FreeRTOS Dual-Core.
-  * **Core 0:** `audioCaptureTask` — Lectura continua I2S → Ring Buffer.
-  * **Core 1:** `audioAnalysisTask` — FFT + RMS + Detección de frecuencia dominante.
+  * **Core 0:** `audioCaptureTask` — Lectura I2S continua a 32-bit, conversión a 16-bit con shift `>> I2S_SHIFT` (default 14) → Ring Buffer thread-safe (32 K muestras = 2 s de pre-roll).
+  * **Core 1:** `audioAnalysisTask` — RMS + baseline EWMA (α=0.02) + FFT (1024 muestras, solo metadatos) + máquina de triggers + grabación WAV.
   * **Core 1:** `ledTask` — Máquina de estados para feedback visual.
   * **Core 1:** `buttonTask` — Smart Button con medición de duración.
 * **Configuración Serial:** Puerto nativo `/dev/cu.usb*`, Baudrate `115200`, Flag `-D ARDUINO_USB_CDC_ON_BOOT=1`.
@@ -74,20 +74,35 @@
 
 ### 4.3 Smart Button
 
-* **Clic Corto (< 1 segundo):** Health Check.
-  * Verifica la disponibilidad de la SD (escribe/elimina `/_health_check.tmp`).
-  * Feedback: 3 parpadeos rápidos en verde (OK) o rojo (fallo).
-* **Pulsación Larga (≥ 3 segundos):** Cambio de Sensibilidad.
-  * Alterna `RMS_THRESHOLD_FACTOR` entre `1.5f` (sensible) y `2.5f` (estricto).
+* **Clic Corto (< 1 segundo): Safe Eject Mode** — toggle de `STATE_PAUSED`.
+  * Estando en `MONITORING` (o cualquier estado distinto de `RECORDING`): desmonta la SD por software con `SD.end()` y entra en `STATE_PAUSED` (LED verde+amarillo fijos). La SD se puede extraer físicamente sin riesgo de corrupción.
+  * Estando en `STATE_PAUSED`: vuelve a llamar `SPI.begin()` + `SD.begin()`. Si el remontaje falla → `STATE_ERROR`. Si OK → `STATE_MONITORING` con cooldown aplicado.
+  * **Durante `STATE_RECORDING` el clic se ignora** para no abortar el WAV en curso (hay que esperar a que termine, máx. 8 s).
+* **Pulsación Larga (≥ 3 segundos): Cambio de Sensibilidad.**
+  * Alterna `RMS_FACTOR` entre `1.5f` (sensible) y `2.5f` (estricto).
   * Feedback: LED amarillo encendido 2 segundos.
   * La variable es `volatile float` para cambios en tiempo de ejecución.
-* **Debounce:** 50ms basado en `xTaskGetTickCount()`.
+  * El modo de sensibilidad **no se persiste** entre reinicios (vuelve a sensible).
+* **Zona muerta (1-3 s):** sin acción. Evita disparos accidentales.
+* **Debounce:** 50 ms basado en `xTaskGetTickCount()`. Polling a 50 Hz.
 
-### 4.4 Compilación
+### 4.4 Estados del sistema
 
-* **RAM:** 27.8% (91KB / 320KB)
-* **Flash:** 9.0% (300KB / 3.3MB)
+| Estado | Patrón LED | Significado |
+|---|---|---|
+| `STATE_MONITORING` | Verde heartbeat 1 Hz | Operación normal |
+| `STATE_RECORDING` | Amarillo fijo | Grabando WAV + CSV |
+| `STATE_ERROR` | Rojo parpadeo rápido (200 ms) | Fallo crítico (grabación o remontaje SD) |
+| `STATE_SD_FULL` | Rojo + Amarillo alternados (500 ms) | SD con < 50 MB libres; pausa grabaciones |
+| `STATE_PAUSED` | **Verde + Amarillo simultáneos fijos** | Safe Eject: SD desmontada por software, segura para extraer |
+| `STATE_PAIRING` | Los 3 LEDs sincronizados (500 ms) | Cambio de sensibilidad en curso |
+
+### 4.5 Compilación
+
+* **RAM:** ~50% (≈164 KB / 320 KB) — incluye `prerollSnapshot` 64 KB + buffers I2S 32-bit + ring buffer.
+* **Flash:** ~11% (≈360 KB / 3.3 MB).
 * **Librerías:** ArduinoFFT 2.0.4, SD 2.0.0, SPI 2.0.0.
+* **`USE_SD_CARD = true`** (hardware SD conectado). Si se desconecta físicamente, cambiar a `false` activa el modo MOCK.
 
 ---
 
@@ -103,16 +118,23 @@
 
 ---
 
-## 6. Lógica de Detección en el Borde (Edge AI)
+## 6. Lógica de Detección en el Borde (Dataset Builder)
 
-* **Captura:** `i2s_read()` alimenta un Ring Buffer thread-safe (mutex + volatile indices).
+* **Captura I2S (Core 0):** `i2s_read()` en modo 32-bit; cada muestra se shifta `>> I2S_SHIFT` (default 14) a int16 para reducir el ruido de fondo del INMP441. El ring buffer es thread-safe (mutex + volatile indices) y guarda **2 s de pre-roll**.
 * **Análisis (Core 1):**
-  * **RMS:** Calcula la media cuadrática de las muestras. Baseline rodante con EWMA (α = 0.01).
-  * **FFT:** ArduinoFFT sobre 512 muestras para extraer la frecuencia dominante.
-  * **Condición de Disparo:** `RMS > baseline * RMS_FACTOR` **Y** `frecuencia_dominante > FREQ_MIN_HZ` (configurable).
-* **Grabación:** Al disparar, graba un archivo WAV (~3s) en la Micro SD con header correcto.
-* **CSV de Eventos:** Registra timestamp, RMS, frecuencia, baseline y nombre de archivo en `/events_log.csv`.
-* **Gestión de Errores:** Si la SD falla, enciende LED rojo fijo (50%) pero el sistema continúa monitoreando.
+  * **RMS:** Media cuadrática sobre bloques de 1024 muestras. Baseline rodante con EWMA (α = 0.02).
+  * **FFT:** ArduinoFFT sobre 1024 muestras → frecuencia dominante. **Solo metadato para el dataset; NO participa en el trigger.**
+  * **Trigger REC (alerta):** `RMS > max(THRESHOLD_RMS=500, baseline · RMS_FACTOR)` con `RMS_FACTOR ∈ {1.5, 2.5}` controlado por el Smart Button.
+  * **Trigger ENV (ambiental):** timer de 30 min para muestreo automático.
+* **Anti-bucle:**
+  * **Warmup 10 s tras boot:** el baseline se actualiza pero no se permite disparar (evita falsos triggers por I2S inestable al arrancar).
+  * **Cooldown 5 s post-grabación:** mismo principio, da margen para que el baseline se reajuste al silencio post-evento.
+* **Grabación:** Al disparar, escribe WAV de **8 s** (2 s pre-roll + 6 s live) con header RIFF correcto.
+  * El pre-roll se copia bajo mutex a un buffer estático (`prerollSnapshot`) antes de la escritura → evita race con Core 0.
+  * El nombre del archivo se construye **una sola vez** y se reutiliza para WAV y CSV (garantiza coherencia).
+* **CSV de Eventos:** `/log_eventos.csv` con columnas `Archivo,Tipo,MAC,Uptime_ms,Evento,Baseline_RMS,Pico_RMS,Freq_Dom_Hz,Temp_C`.
+* **SD llena:** Cada 30 s se chequea `SD.totalBytes() - SD.usedBytes()`. Si quedan < 50 MB → `STATE_SD_FULL` (LED rojo+amarillo alternados, sin grabaciones). Al liberar espacio (SD nueva o limpieza), el sistema vuelve solo a `STATE_MONITORING`.
+* **Errores de grabación:** Si `recordWavToSD` falla, `STATE_ERROR` con LED rojo 5 s y vuelta automática a monitoreo (no bloquea el sistema).
 
 ---
 

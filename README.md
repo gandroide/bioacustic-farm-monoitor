@@ -1,6 +1,6 @@
 # 🐷 Bio-Alert — Sistema de Monitoreo Bioacústico
 
-Sistema de detección de estrés porcino (aplastamiento de lechones) mediante procesamiento de audio en el borde y plataforma SaaS multi-tenant.
+Plataforma de monitoreo bioacústico para granjas porcinas. Fase actual: **Dataset Builder** — recolección de audio en el borde (ESP32-S3) sobre eventos disparados por RMS + capturas ambientales periódicas, para entrenar un modelo de Edge AI/ML que detecte estrés porcino (p. ej. aplastamiento de lechones). El SaaS multi-tenant consume y gestiona los eventos.
 
 ## Arquitectura
 
@@ -19,9 +19,22 @@ granja/
 
 | Capa | Tecnología |
 |---|---|
-| **Edge (Firmware)** | ESP32-S3, C++, PlatformIO, FreeRTOS, ArduinoFFT |
+| **Edge (Firmware)** | ESP32-S3, C++, PlatformIO, FreeRTOS dual-core, ArduinoFFT |
 | **Cloud (Frontend)** | Next.js 14, TypeScript, Tailwind CSS, Shadcn/UI |
 | **Backend (BaaS)** | Supabase (PostgreSQL, Auth, Storage, Realtime) |
+
+## Firmware Edge — Features actuales
+
+- Captura I2S continua (INMP441) en Core 0 → ring buffer de 2 s.
+- Análisis RMS + baseline EWMA + FFT (metadata) en Core 1.
+- Grabación WAV de **8 s** (2 s pre-roll + 6 s live) en dos modos:
+  - **REC**: alerta por RMS > `max(THRESHOLD_RMS, baseline · RMS_FACTOR)`.
+  - **ENV**: muestreo ambiental automático cada 30 min.
+- I2S leído como 32-bit y convertido a 16-bit por software para reducir ruido del INMP441.
+- **Warmup (10 s)** al boot y **cooldown (5 s)** post-grabación para evitar disparos en cascada.
+- **Detección de SD llena** (`STATE_SD_FULL`, < 50 MB libres) con LED rojo+amarillo alternados a 1 Hz.
+- **Smart Button**: clic corto = health check de SD; pulsación ≥ 3 s = toggle de sensibilidad.
+- Log de metadatos en `/log_eventos.csv` (MAC, uptime, baseline, pico RMS, freq dominante, temp).
 
 ## Quick Start
 
@@ -49,10 +62,13 @@ pio device monitor # Monitor serial
 ## Hardware
 
 El nodo principal (`bio-acoustic-health`) integra:
-- 🎙️ Micrófono INMP441 (I2S, 16kHz, 16-bit)
-- 💾 Micro SD (SPI, FAT32) para grabación WAV
-- 🟢🟡🔴 3 LEDs indicadores (PWM)
-- 🔘 Smart Button (Health Check / Cambio de Sensibilidad)
+- 🎙️ Micrófono INMP441 — I2S, 16 kHz, lectura 32-bit → conversión a 16-bit por software
+- 💾 Micro SD (SPI, FAT32) para grabación WAV + CSV de eventos
+- 🟢🟡🔴 3 LEDs indicadores (PWM): MONITOREO, GRABANDO, ERROR, SD_FULL, PAIRING
+- 🔘 Smart Button:
+  - **Clic corto (< 1 s)** → Safe Eject: desmonta la SD por software, LED verde+amarillo fijos. Otro clic remonta y reanuda.
+  - **Pulsación larga (≥ 3 s)** → Toggle sensibilidad (1.5× ↔ 2.5×).
+  - **Durante grabación** el clic corto se ignora (no interrumpe el WAV en curso).
 
 ## Licencia
 

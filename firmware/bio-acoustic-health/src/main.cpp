@@ -179,6 +179,15 @@ static SemaphoreHandle_t rbMutex = NULL;
 // para evitar que Core 0 sobrescriba los samples mientras los escribimos a SD.
 static int16_t prerollSnapshot[PREROLL_SAMPLES];
 
+// Pre-roll Buffer dedicado: sliding window de los últimos 2s de audio.
+// Lo alimenta audioCaptureTask en paralelo al ring buffer principal y NUNCA
+// se drena entre triggers (a diferencia del ring buffer, que el análisis
+// vacía continuamente). Garantiza que al disparar siempre haya 2s de
+// contexto previo al evento disponibles.
+static int16_t prerollBuffer[PREROLL_SAMPLES];
+static volatile size_t prerollWriteIdx = 0;
+static SemaphoreHandle_t prerollMutex = NULL;
+
 // Contador de eventos (archivos grabados)
 static uint32_t eventCounter = 0;
 
@@ -279,6 +288,38 @@ static size_t rb_snapshot(int16_t *dest, size_t maxSamples) {
   }
   xSemaphoreGive(rbMutex);
   return toCopy;
+}
+
+// =============================================================================
+// PRE-ROLL BUFFER — sliding window de los últimos 2s (nunca se drena)
+// =============================================================================
+
+/**
+ * @brief Escribe muestras al buffer dedicado de pre-roll, sobrescribiendo
+ *        circularmente. Llamado desde audioCaptureTask en paralelo a rb_write.
+ */
+static void preroll_write(const int16_t *data, size_t count) {
+  xSemaphoreTake(prerollMutex, portMAX_DELAY);
+  for (size_t i = 0; i < count; i++) {
+    prerollBuffer[prerollWriteIdx] = data[i];
+    prerollWriteIdx = (prerollWriteIdx + 1) % PREROLL_SAMPLES;
+  }
+  xSemaphoreGive(prerollMutex);
+}
+
+/**
+ * @brief Copia los últimos PREROLL_SAMPLES en orden cronológico (más antiguo
+ *        primero) al destino, partiendo desde la posición de escritura actual
+ *        (que es donde está la muestra más antigua en un buffer circular lleno).
+ *        Tras los primeros 2s tras el boot, contiene siempre 2s de contexto.
+ */
+static void preroll_snapshot(int16_t *dest) {
+  xSemaphoreTake(prerollMutex, portMAX_DELAY);
+  size_t startIdx = prerollWriteIdx; // la próxima posición a sobrescribir = la más antigua
+  for (size_t i = 0; i < PREROLL_SAMPLES; i++) {
+    dest[i] = prerollBuffer[(startIdx + i) % PREROLL_SAMPLES];
+  }
+  xSemaphoreGive(prerollMutex);
 }
 
 // =============================================================================
@@ -503,34 +544,24 @@ static bool recordWavToSD(bool isEnv, float currentRMS, const char *filename) {
 
   uint32_t totalBytesWritten = 0;
 
-  // === FASE 1: Volcar 2s de pre-roll desde el Ring Buffer ===
-  // Copiamos TODO el pre-roll a un buffer estático bajo mutex para aislarlo
-  // del Core 0 antes de escribir a SD. Tarda ~1-2 ms (memcpy en SRAM).
+  // === FASE 1: Volcar 2s de pre-roll desde el buffer dedicado ===
+  // El prerollBuffer es una sliding window alimentada en paralelo por
+  // audioCaptureTask y nunca drenada → siempre tiene 2s de contexto previo.
   const size_t chunkSamples = SD_WRITE_BUF / sizeof(int16_t); // 2048 muestras
   int16_t sdBuf[SD_WRITE_BUF / sizeof(int16_t)];
 
-  xSemaphoreTake(rbMutex, portMAX_DELAY);
-  size_t snapAvail = rb_available();
-  size_t samplesToWrite =
-      (snapAvail < PREROLL_SAMPLES) ? snapAvail : PREROLL_SAMPLES;
-  size_t snapStart = rbReadIdx;
-  for (size_t i = 0; i < samplesToWrite; i++) {
-    prerollSnapshot[i] = ringBuffer[(snapStart + i) % RING_BUF_SAMPLES];
-  }
-  // Consumir solo lo que realmente copiamos
-  rbReadIdx = (snapStart + samplesToWrite) % RING_BUF_SAMPLES;
-  xSemaphoreGive(rbMutex);
+  preroll_snapshot(prerollSnapshot); // copia bajo mutex propio, ~1-2 ms
 
   // Escribir el snapshot a SD en chunks (sin mutex, ya está aislado en RAM)
   size_t prerollOffset = 0;
-  while (prerollOffset < samplesToWrite) {
+  while (prerollOffset < PREROLL_SAMPLES) {
     size_t thisChunk = chunkSamples;
-    if (prerollOffset + thisChunk > samplesToWrite)
-      thisChunk = samplesToWrite - prerollOffset;
+    if (prerollOffset + thisChunk > PREROLL_SAMPLES)
+      thisChunk = PREROLL_SAMPLES - prerollOffset;
 
     size_t bytesToWrite = thisChunk * sizeof(int16_t);
-    size_t written = wavFile.write((const uint8_t *)&prerollSnapshot[prerollOffset],
-                                   bytesToWrite);
+    size_t written = wavFile.write(
+        (const uint8_t *)&prerollSnapshot[prerollOffset], bytesToWrite);
     totalBytesWritten += written;
     prerollOffset += thisChunk;
 
@@ -690,6 +721,7 @@ static void audioCaptureTask(void *param) {
         readBuf16[i] = (int16_t)(y >> I2S_SHIFT);
       }
       rb_write(readBuf16, samplesRead);
+      preroll_write(readBuf16, samplesRead); // sliding window para pre-roll
       totalSamples += samplesRead;
     }
 
@@ -1203,10 +1235,11 @@ void setup() {
   Serial.printf("  Temp. Core: %.1f °C\n", temperatureRead());
   Serial.println("=============================================\n");
 
-  // --- Crear mutex del ring buffer ---
+  // --- Crear mutex del ring buffer y del pre-roll buffer ---
   rbMutex = xSemaphoreCreateMutex();
-  if (rbMutex == NULL) {
-    Serial.println("[FATAL] No se pudo crear el mutex del ring buffer.");
+  prerollMutex = xSemaphoreCreateMutex();
+  if (rbMutex == NULL || prerollMutex == NULL) {
+    Serial.println("[FATAL] No se pudo crear mutex (ring buffer o pre-roll).");
     while (true) {
       delay(1000);
     }

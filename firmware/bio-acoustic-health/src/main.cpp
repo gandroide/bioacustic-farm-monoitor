@@ -83,6 +83,11 @@ static const size_t I2S_READ_SAMPLES = 512;
 // >> 14 da buena dinámica sin clipping; bajar a 12-13 para más volumen.
 static const uint8_t I2S_SHIFT = 14;
 
+// DC blocker IIR HPF: y[n] = (x[n] - x[n-1]) + R · y[n-1]
+// R = 1019/1024 ≈ 0.9951 → corte ≈ 12 Hz a 16 kHz. Estado continuo entre
+// bloques: evita los clicks rítmicos que produce restar la media por bloque.
+static const int32_t HPF_R_Q10 = 1019; // R en formato Q10 (1024 = 1.0)
+
 // FFT (para metadatos del dataset, NO como trigger)
 static const uint16_t FFT_SAMPLES = 1024; // Debe ser potencia de 2
 
@@ -96,6 +101,19 @@ static const float THRESHOLD_RMS = 500.0f; // Ajustar según ambiente real
 static const float RMS_FACTOR_SENSITIVE = 1.5f;
 static const float RMS_FACTOR_STRICT = 2.5f;
 static volatile float RMS_FACTOR = RMS_FACTOR_SENSITIVE;
+
+// --- Filtro de banda para el trigger ---
+// Los chillidos de lechón se concentran típicamente en 1.5-5 kHz.
+// Disparamos solo si la frecuencia dominante de la FFT cae en esta banda;
+// música y voz humana suelen tener dominantes fuera (sub-1 kHz).
+static const float TRIGGER_FREQ_MIN_HZ = 1500.0f;
+static const float TRIGGER_FREQ_MAX_HZ = 5000.0f;
+
+// --- Onset detection: anti-música sostenida ---
+// Disparamos solo si el RMS sube de golpe respecto al bloque previo
+// (chillido = ataque brusco, música/voz = energía sostenida).
+// Umbral expresado como múltiplo del baseline actual.
+static const float ONSET_DELTA_FACTOR = 1.0f;
 
 // Baseline rodante: suavizado exponencial
 static const float BASELINE_ALPHA = 0.02f;
@@ -525,12 +543,14 @@ static bool recordWavToSD(bool isEnv, float currentRMS, const char *filename) {
   Serial.printf("[REC] Pre-roll: %lu bytes escritos\n",
                 (unsigned long)totalBytesWritten);
 
-  // === FASE 2: Grabar los segundos restantes en tiempo real desde I2S ===
-  // El I2S entrega 32-bit; se convierte a 16-bit por software con shift.
-  static int32_t i2sBuf32[SD_WRITE_BUF / sizeof(int16_t)]; // 2048 muestras
-  size_t bytesRead = 0;
+  // === FASE 2: Grabar los segundos restantes desde el ring buffer ===
+  // Se consume del ring buffer (alimentado a 16 kHz por audioCaptureTask)
+  // en lugar de competir con captureTask por el driver I2S. Eso eliminaba
+  // samples por contención y dejaba el audio acelerado ~2× al reproducir.
+  // El HPF ya está aplicado en captureTask antes de meter al ring buffer.
   uint32_t liveBytesTarget = RECORD_BYTES - totalBytesWritten;
   uint32_t liveWritten = 0;
+  uint32_t liveStartMs = millis();
 
   while (liveWritten < liveBytesTarget) {
     size_t samplesThisRound = chunkSamples;
@@ -539,19 +559,18 @@ static bool recordWavToSD(bool isEnv, float currentRMS, const char *filename) {
     if (samplesThisRound > samplesRemaining)
       samplesThisRound = samplesRemaining;
 
-    size_t bytesToReadI2S = samplesThisRound * sizeof(int32_t);
-    esp_err_t err = i2s_read(I2S_PORT, i2sBuf32, bytesToReadI2S, &bytesRead,
-                             pdMS_TO_TICKS(1000));
-    if (err != ESP_OK || bytesRead == 0) {
-      Serial.println("[ERROR] Fallo I2S durante grabación live.");
-      break;
+    // Esperar a tener suficientes muestras en el ring buffer.
+    // Timeout defensivo: si captureTask murió, no nos bloqueamos para siempre.
+    uint32_t waitStartMs = millis();
+    while (rb_available() < samplesThisRound) {
+      if (millis() - waitStartMs > 2000) {
+        Serial.println("[ERROR] Ring buffer no se llena (¿captureTask OK?).");
+        goto live_end;
+      }
+      vTaskDelay(pdMS_TO_TICKS(20));
     }
 
-    size_t samplesRead = bytesRead / sizeof(int32_t);
-    for (size_t i = 0; i < samplesRead; i++) {
-      sdBuf[i] = (int16_t)(i2sBuf32[i] >> I2S_SHIFT);
-    }
-
+    size_t samplesRead = rb_read(sdBuf, samplesThisRound);
     size_t bytesToWriteSD = samplesRead * sizeof(int16_t);
     size_t written = wavFile.write((const uint8_t *)sdBuf, bytesToWriteSD);
     if (written != bytesToWriteSD) {
@@ -561,6 +580,15 @@ static bool recordWavToSD(bool isEnv, float currentRMS, const char *filename) {
     liveWritten += written;
     totalBytesWritten += written;
   }
+live_end:
+
+  uint32_t liveDurationMs = millis() - liveStartMs;
+  Serial.printf("[REC] Live phase: %lu ms (esperado ~%lu ms) — %s\n",
+                (unsigned long)liveDurationMs,
+                (unsigned long)(LIVE_SECONDS * 1000),
+                (liveDurationMs < LIVE_SECONDS * 1000 - 300)   ? "⚠ RÁPIDO"
+                : (liveDurationMs > LIVE_SECONDS * 1000 + 300) ? "⚠ LENTO"
+                                                               : "✓");
 
   wavFile.close();
   Serial.printf("[REC] Completado: %s (%lu bytes total)\n", filename,
@@ -632,9 +660,13 @@ static void writeEventCSV(const char *wavFilename, bool isEnv) {
 // =============================================================================
 
 static void audioCaptureTask(void *param) {
-  int32_t readBuf32[I2S_READ_SAMPLES];
-  int16_t readBuf16[I2S_READ_SAMPLES];
+  // Buffers estáticos para no comer stack (la tarea es pequeña, 6 KB).
+  static int32_t readBuf32[I2S_READ_SAMPLES];
+  static int16_t readBuf16[I2S_READ_SAMPLES];
   size_t bytesRead = 0;
+
+  uint32_t totalSamples = 0;
+  uint32_t lastReportMs = millis();
 
   Serial.println("[Core 0] Tarea de captura I2S iniciada.");
 
@@ -643,12 +675,31 @@ static void audioCaptureTask(void *param) {
                              portMAX_DELAY);
     if (err == ESP_OK && bytesRead > 0) {
       size_t samplesRead = bytesRead / sizeof(int32_t);
+
+      // DC blocker IIR (estado continuo entre bloques).
+      // Sin esto, el INMP441 leído como 32-bit tiene offset enorme que
+      // infla el RMS de "silencio" y satura los primeros bins de la FFT.
+      static int32_t hpfPrevX = 0;
+      static int32_t hpfPrevY = 0;
       for (size_t i = 0; i < samplesRead; i++) {
-        readBuf16[i] = (int16_t)(readBuf32[i] >> I2S_SHIFT);
+        int32_t x = readBuf32[i];
+        int64_t y_acc = ((int64_t)hpfPrevY * HPF_R_Q10) >> 10;
+        int32_t y = (int32_t)((int64_t)(x - hpfPrevX) + y_acc);
+        hpfPrevX = x;
+        hpfPrevY = y;
+        readBuf16[i] = (int16_t)(y >> I2S_SHIFT);
       }
       rb_write(readBuf16, samplesRead);
+      totalSamples += samplesRead;
     }
-    // Yield mínimo para que el watchdog no se dispare
+
+    uint32_t now = millis();
+    if (now - lastReportMs >= 5000) {
+      Serial.printf("[I2S-RATE] %lu sps\n",
+                    (unsigned long)(totalSamples / 5));
+      totalSamples = 0;
+      lastReportMs = now;
+    }
     taskYIELD();
   }
 }
@@ -701,9 +752,19 @@ static void audioAnalysisTask(void *param) {
     float rms = sqrtf((float)sumSq / RMS_BLOCK_SAMPLES);
 
     // === 2. Actualizar Baseline rodante ===
-    if (!baselineInitialized) {
+    // El primer RMS tras boot incluye un transient del I2S que infla
+    // el baseline ~30 s. Recalibramos UNA vez al terminar el warmup
+    // con el RMS estable de ese momento → threshold operativo de inmediato.
+    static bool baselineRecalibrated = false;
+    bool warmupJustEnded = !baselineRecalibrated &&
+                           (millis() - bootTimeMs) >= WARMUP_MS;
+    if (!baselineInitialized || warmupJustEnded) {
       rmsBaseline = rms;
       baselineInitialized = true;
+      if (warmupJustEnded) {
+        baselineRecalibrated = true;
+        Serial.printf("[BASELINE] Recalibrado tras warmup: %.0f\n", rms);
+      }
     } else {
       rmsBaseline =
           BASELINE_ALPHA * rms + (1.0f - BASELINE_ALPHA) * rmsBaseline;
@@ -784,12 +845,38 @@ static void audioAnalysisTask(void *param) {
       continue;
     }
 
-    // === 5. Trigger por RMS (Alerta) — FFT NO participa en el trigger ===
+    // === 5. Trigger por RMS + Frecuencia + Onset ===
+    // Triple criterio para distinguir chillidos de música/voz:
+    //   (a) Nivel: RMS > baseline·factor (con piso absoluto THRESHOLD_RMS)
+    //   (b) Banda: frecuencia dominante en TRIGGER_FREQ_MIN..MAX_HZ
+    //   (c) Onset: subida brusca respecto al bloque anterior (~64 ms)
     float threshold = rmsBaseline * RMS_FACTOR;
     if (threshold < THRESHOLD_RMS)
       threshold = THRESHOLD_RMS;
 
-    bool rmsTriggered = (rms > threshold);
+    static float prevRMS = 0.0f;
+    float deltaRMS = rms - prevRMS;
+    prevRMS = rms;
+
+    bool rmsLevelOk = (rms > threshold);
+    bool freqInBand = (lastFreqHz >= TRIGGER_FREQ_MIN_HZ &&
+                       lastFreqHz <= TRIGGER_FREQ_MAX_HZ);
+    bool onsetOk = (deltaRMS > rmsBaseline * ONSET_DELTA_FACTOR);
+
+    bool rmsTriggered = rmsLevelOk && freqInBand && onsetOk;
+
+    // Log de sonidos altos descartados por filtro (útil para tuning).
+    // Throttle a 1 evento cada 500 ms para no saturar la serial.
+    if (rmsLevelOk && !rmsTriggered) {
+      static uint32_t lastFilterLogMs = 0;
+      if (millis() - lastFilterLogMs >= 500) {
+        lastFilterLogMs = millis();
+        Serial.printf("[FILTER] RMS=%.0f alto pero descartado: "
+                      "Freq=%.0f Hz [%s], ΔRMS=%.0f [%s]\n",
+                      rms, lastFreqHz, freqInBand ? "OK" : "NO",
+                      deltaRMS, onsetOk ? "OK" : "NO");
+      }
+    }
 
     // === 6. Timer ENV (Muestreo Ambiental cada 30 min) ===
     bool envTriggered = ((millis() - lastEnvCaptureMs) >= ENV_INTERVAL_MS);
@@ -805,7 +892,9 @@ static void audioAnalysisTask(void *param) {
         lastEnvCaptureMs = millis(); // Reset timer
       } else {
         Serial.println("============================================");
-        Serial.printf(">>> TRIGGER RMS | RMS=%.0f Thr=%.0f\n", rms, threshold);
+        Serial.printf(">>> TRIGGER | RMS=%.0f Thr=%.0f Freq=%.0f Hz "
+                      "ΔRMS=%.0f\n",
+                      rms, threshold, lastFreqHz, deltaRMS);
         Serial.println("============================================");
       }
 
@@ -1153,6 +1242,10 @@ void setup() {
   Serial.println("--- Configuración del Recolector ---");
   Serial.printf("  RMS Threshold: %.0f (mínimo absoluto)\n", THRESHOLD_RMS);
   Serial.printf("  RMS Factor:    %.1fx sobre baseline\n", RMS_FACTOR);
+  Serial.printf("  Trigger Banda: %.0f - %.0f Hz\n", TRIGGER_FREQ_MIN_HZ,
+                TRIGGER_FREQ_MAX_HZ);
+  Serial.printf("  Onset Δ:       > %.1fx baseline (anti-sostenido)\n",
+                ONSET_DELTA_FACTOR);
   Serial.printf("  Grabación:     %us total (%lus pre-roll + %lus live)\n",
                 RECORD_TOTAL_SECONDS, (unsigned long)PREROLL_SECONDS,
                 (unsigned long)LIVE_SECONDS);
@@ -1179,7 +1272,7 @@ void setup() {
   if (systemState != STATE_ERROR) {
     xTaskCreatePinnedToCore(audioCaptureTask,   // Función
                             "I2S_Capture",      // Nombre
-                            4096,               // Stack (bytes)
+                            6144,               // Stack (bytes)
                             NULL,               // Parámetro
                             3,                  // Prioridad (alta)
                             &captureTaskHandle, // Handle

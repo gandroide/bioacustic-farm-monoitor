@@ -24,6 +24,14 @@ node_modules/
 out/
 .vercel
 
+# ── Backend (bio-acoustic-backend, NestJS) ──
+bio-acoustic-backend/dist/
+bio-acoustic-backend/coverage/
+bio-acoustic-backend/.env
+bio-acoustic-backend/.env.local
+bio-acoustic-backend/.env.*.local
+bio-acoustic-backend/*.log
+
 # ── PlatformIO / Firmware ──
 .pio/
 compile_commands.json

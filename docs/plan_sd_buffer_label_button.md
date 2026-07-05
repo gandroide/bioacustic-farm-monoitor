@@ -133,8 +133,8 @@ Este plan aborda tres cambios interrelacionados:
 - **Cliente Supabase en Route Handlers:** `@supabase/supabase-js` con `SUPABASE_SERVICE_ROLE_KEY` (server-only). Sin ORM por ahora — el volumen de queries en Route Handlers no lo requiere.
 - **Migraciones SQL:** vía `supabase-cli` con archivos versionados en `bio-acoustic-frontend/db/migrations/*.sql`. Aplicables con `supabase db push`.
 - **Emails transaccionales:** cubiertos por Supabase Auth desde el inicio (verificación, reset password). Sin proveedor externo por ahora.
-- **Proyecto Supabase para desarrollo v2:** se crea un **segundo proyecto** llamado `bio-alert-v2-dev` para aislar migraciones destructivas del proyecto productivo actual. El proyecto productivo (renombrado a `bio-alert`) sigue sirviendo `main`. Migración de datos en el cutover final (§H.4).
-- **Renombrar proyecto Supabase actual:** `ontiveros bio alert` → `bio-alert` (cosmético, cero downtime).
+- **Proyecto Supabase único (revisado 2026-07-05):** se usa el **mismo proyecto Supabase actual** para desarrollo v2. El proyecto no está en producción real (sin datos sensibles, sólo datos de pruebas). Las migraciones son **aditivas** (columnas nullables, tablas nuevas) — no rompen el frontend actual de `main`. La complejidad de aislar dos proyectos no vale la pena en este estado.
+- **Renombrar proyecto Supabase:** opcional, cuando el usuario quiera (`ontiveros bio alert` → `bio-alert` o lo que prefiera). Cosmético, cero impacto.
 
 ---
 
@@ -298,17 +298,17 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 
 > **Nota general de Fase 0 (aclarada 2026-07-05):** **NADA de este plan merge a `main` hasta que TODO esté validado en campo.** Todas las subfases (0-A a 0-F, y luego 1 a 8) viven en la rama, sin excepción. `main` conserva el estado actual (Supabase + Next.js + firmware v1) intacto hasta el corte final. Ver §H.
 
-### Fase 0-A — Migraciones incrementales en Supabase v2-dev
-> Se trabajará contra el **segundo proyecto Supabase `bio-alert-v2-dev`**, no el productivo.
+### Fase 0-A — Migraciones incrementales en Supabase (proyecto único)
+> Se trabaja contra el **proyecto Supabase actual**. Las migraciones son aditivas y no rompen la app en `main`.
 
 - Setup `supabase-cli` en el repo: `supabase init` en la raíz o dentro de `bio-acoustic-frontend/`.
-- Link al proyecto v2-dev: `supabase link --project-ref <ref>`.
-- Crear migraciones versionadas en `db/migrations/*.sql`:
+- Link al proyecto: `supabase link --project-ref <ref>`.
+- Crear migraciones versionadas en `db/migrations/*.sql`. **Todas ADITIVAS** (columnas nullables, tablas nuevas — no rompen el frontend actual de `main`):
   - `<ts>_add_ingest_token_to_devices.sql` → `ALTER TABLE devices ADD COLUMN ingest_token TEXT UNIQUE; ALTER TABLE devices ADD COLUMN last_seen TIMESTAMPTZ`.
   - `<ts>_extend_events_with_audio_columns.sql` → las 9 columnas nullables (event_type, baseline_rms, peak_rms, dominant_freq_hz, temp_c, uptime_ms, audio_url, operator_label, metadata).
   - `<ts>_create_pairing_codes.sql` → tabla nueva.
-  - `<ts>_harden_rls_events_and_alerts_bucket.sql` → verificar y endurecer RLS de `events` (SELECT por `farm_id`) y del bucket `alerts` (INSERT solo con service role, SELECT restringido por `farm_id` matching path).
-- `supabase db push` aplica al proyecto v2-dev.
+  - `<ts>_harden_rls_events_and_alerts_bucket.sql` → verificar y endurecer RLS de `events` (SELECT por `farm_id`) y del bucket `alerts` (INSERT solo con service role, SELECT restringido por `farm_id` matching path). **Cuidado con esta migración**: si `main` accede a `events` con anon key sin claim de `farm_id`, endurecer RLS puede bloquearle. Revisar antes de aplicar.
+- `supabase db push` aplica al proyecto.
 - Seed script mínimo en `db/seed.sql`: 1 super admin, 1 org test, 1 site/building/room, 1 device paireable.
 - Actualizar `docs/supabase_schema.sql` con snapshot post-migración.
 - Commit: `db: incremental migrations for v2 (events cols + pairing_codes + devices.ingest_token)`.
@@ -512,7 +512,7 @@ A eliminar:
 
 | Fase | Cómo probar |
 |---|---|
-| 0-A | En Supabase Studio de `bio-alert-v2-dev`: `events` con las 9 columnas nuevas, `pairing_codes` creada, `devices.ingest_token` + `devices.last_seen` presentes. Filas existentes intactas. `supabase db push` idempotente. Seed pobla 1 org/site/room/device. |
+| 0-A | En Supabase Studio: `events` con las 9 columnas nuevas, `pairing_codes` creada, `devices.ingest_token` + `devices.last_seen` presentes. Filas existentes intactas. Las 7 páginas del frontend actual siguen funcionando (verificar con `npm run build` + smoke test). `supabase db push` idempotente. Seed opcional (los datos de pruebas existentes bastan). |
 | 0-B | Frontend sigue funcionando idéntico: 7 páginas OK, dashboard con Realtime OK, admin panel OK. `lib/supabase.ts` desaparece. Imports actualizados en 7 páginas apuntando a `lib/db/*` y `lib/supabase/client.ts`. `npm run build` pasa. zod instalado, un schema de ejemplo. |
 | 0-C | En incógnito: `/dashboard` sin login → redirect a `/login`. `/admin` sin ser super_admin → 403. `npm run build` con `ignoreBuildErrors: false` pasa (o los que queden documentados). `app/api/v1/telemetry/route.ts` eliminado. |
 | 1 | Serial monitor: BTN_SYNC (clic corto → PAUSED; clic largo → toggle sensibilidad) funciona idéntico a hoy. |
@@ -627,10 +627,10 @@ Ese doc queda **desactualizado**. Se marca como archivo histórico. No se elimin
 
 | Entorno | Sirve a | Origen |
 |---|---|---|
-| **Prod actual** (intocado) | Granja piloto real + nodos v1 | Rama `main`, Vercel Prod, Supabase actual |
-| **Preview de la rama** | Sólo el usuario y colaboradores | Vercel Preview (auto por PR), Railway (proyecto separado), Neon (branch de DB o proyecto separado), R2 (bucket `alerts-dev`) |
+| **Prod actual (intocado en código)** | Uso interno de pruebas | Rama `main`, Vercel Prod, Supabase compartido |
+| **Preview de la rama v2** | Sólo desarrollo | Vercel Preview (auto por push), Supabase compartido |
 
-Vercel crea previews por rama automáticamente. Railway se configura para desplegar la rama a un servicio marcado como `bio-acoustic-backend-preview`. Neon puede usar **DB branching** (una de sus ventajas fuertes): la rama de git tiene su propia rama de DB, aislada del prod cuando prod exista.
+**Aislamiento de código**, no de datos: `main` no recibe ningún commit del trabajo v2 hasta el cutover. Pero como el proyecto no está en producción real y no hay datos sensibles, **ambas ramas comparten el mismo proyecto Supabase**. Las migraciones se diseñan aditivas para no romper `main`. Si aparece un caso real donde una migración destructiva fuera necesaria (por ejemplo `DROP COLUMN` o rename), se posterga al cutover final.
 
 ### H.4 Cómo se hace el corte final (Fase de cutover)
 

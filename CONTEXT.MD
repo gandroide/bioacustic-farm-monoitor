@@ -11,22 +11,21 @@
 
 * **Objetivo:** Plataforma de monitoreo bioacústico para granjas porcinas. La **fase actual** del firmware es de **Dataset Builder para Edge AI/ML**: recolectar audio en el borde sobre eventos disparados por RMS + capturas ambientales periódicas, etiquetarlo, y entrenar un modelo que más adelante correrá en el propio ESP32-S3 para detectar estrés porcino (p. ej. aplastamiento de lechones) y alertar vía el SaaS multi-tenant.
 * **Estructura Monorepo:**
-  * **`/bio-acoustic-frontend`:** Frontend SaaS en Next.js 14 (Cloud, Vercel).
-  * **`/bio-acoustic-backend`:** Backend NestJS delgado para IoT + escrituras (Cloud, Railway). **EN CREACIÓN (Fase 0).**
+  * **`/bio-acoustic-frontend`:** SaaS completo — UI + API (Next.js 14 Route Handlers + Supabase). Deploy: Vercel.
   * **`/firmware/bio-acoustic-health`:** Nodo principal — Monitoreo de audio (Edge). **v2 en desarrollo, v1 en main.**
   * **`/firmware/bio-acoustic-bread`:** Nodo de cría/maternidad — Sensores ambientales (Edge). **EN DESARROLLO.**
   * **`/docs`:** Documentación de planificación y esquemas.
 * **Base de Datos (BaaS):** Supabase (PostgreSQL + Auth + Storage + Realtime + RLS).
-* **Estado Actual (rama v2/full-stack):** rewrite completo del stack — backend NestJS separado, firmware v2 con SD como buffer + WiFi + botón de etiqueta. `main` conserva v1 productivo intacto hasta cutover.
+* **Backend en Fase 1:** No hay backend separado. Los endpoints IoT (`/api/ingest`, `/api/claim`, `/api/heartbeat`, `/api/pairing-code`) viven como Next.js Route Handlers dentro del frontend. Ver `docs/plan_sd_buffer_label_button.md` §G para criterios de extracción futura.
+* **Estado Actual (rama v2/full-stack):** rewrite del firmware (SD como buffer + WiFi + botón de etiqueta), extensión de schema Supabase, `middleware.ts` de auth server-side. `main` conserva v1 productivo intacto hasta cutover.
 
 ---
 
 ## 2. Cloud Web App & Backend (SaaS Multi-Tenant)
 
-* **Stack Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Shadcn/UI, `@supabase/*` para auth + reads RLS + realtime + signed URLs.
-* **Stack Backend (v2, en creación):** NestJS + Drizzle ORM + `@supabase/supabase-js` (service role). Node 22 LTS. Deploy en Railway. Concentra endpoints IoT (`/ingest`, `/claim`, `/heartbeat`) y escrituras de admin. Es la única superficie que ve la `SUPABASE_SERVICE_ROLE_KEY`.
-* **Directorio Frontend:** `/bio-acoustic-frontend` (Root Directory en Vercel: `bio-acoustic-frontend`).
-* **Directorio Backend:** `/bio-acoustic-backend` (Root Directory en Railway).
+* **Stack Frontend + API:** Next.js 14 (App Router), TypeScript, Tailwind CSS, Shadcn/UI, `@supabase/*`. Todo en un solo paquete: páginas RSC + Route Handlers en `app/api/*` para IoT y writes admin.
+* **Cliente Supabase en Route Handlers:** `@supabase/supabase-js` con `SUPABASE_SERVICE_ROLE_KEY` (server-only, sin prefijo `NEXT_PUBLIC_`, jamás en el bundle cliente).
+* **Directorio:** `/bio-acoustic-frontend` (Root Directory en Vercel).
 * **Multi-Tenancy:** Tabla `farms` con `farm_id` vinculado a usuarios/eventos/dispositivos. Row Level Security (RLS) activo.
 * **Roles:** Super Admin (Ontiveros — acceso global) y Farm Admin (acceso aislado a su granja).
 * **Features:**

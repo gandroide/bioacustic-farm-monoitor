@@ -7,47 +7,43 @@
 
 ---
 
-## Arquitectura del sistema (confirmada 2026-07-05, revisión final)
+## Arquitectura del sistema (confirmada 2026-07-05, revisión final tras 3 iteraciones)
 
-Tres capas independientes, comunicadas por HTTPS. Se reutiliza Supabase como BaaS (ya en uso) y se añade un backend NestJS delgado para IoT + escrituras.
+Dos capas, comunicadas por HTTPS. Sin backend separado en Fase 1 (dataset builder). Los endpoints IoT y admin viven como Next.js Route Handlers hasta que el volumen fuerce una extracción.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CAPA 1 — EDGE (dentro de cada granja)                                  │
 │   ESP32-S3 N16R8 · WiFi local · HTTPS con X-Device-Token                 │
 └─────────────────────────────┬───────────────────────────────────────────┘
-                              │  POST /ingest, /claim, /heartbeat
+                              │  POST /api/ingest, /api/claim, /api/heartbeat
                               ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CAPA 2 — CLOUD                                                         │
 │                                                                          │
-│  ┌────────────────────────┐   ┌──────────────────────────────────────┐  │
-│  │ bio-acoustic-backend   │──▶│ Supabase                             │  │
-│  │ NestJS · Railway       │   │  ┌────────────────────────────────┐  │  │
-│  │ ─ /ingest    (IoT)     │   │  │ Postgres (farms, devices,      │  │  │
-│  │ ─ /claim     (IoT)     │   │  │  acoustic_events, pairing_...) │  │  │
-│  │ ─ /heartbeat (IoT)     │   │  ├────────────────────────────────┤  │  │
-│  │ ─ /pairing-code (adm)  │   │  │ Auth (JWT, email + password)   │  │  │
-│  │ ─ /devices, /events    │   │  ├────────────────────────────────┤  │  │
-│  │   (writes de admin)    │   │  │ Storage (bucket alerts)        │  │  │
-│  │ ─ Guarda SERVICE_KEY   │   │  ├────────────────────────────────┤  │  │
-│  └───────────┬────────────┘   │  │ Realtime (WebSocket)           │  │  │
-│              │                │  └────────────────────────────────┘  │  │
-│              │                └───────────────────┬──────────────────┘  │
-│              │                                    │                     │
-│              │  writes admin                      │  reads RLS-safe +   │
-│              │                                    │  Realtime           │
-│              ▼                                    ▼                     │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ bio-acoustic-frontend                                            │   │
-│  │ Next.js 14 · Vercel                                              │   │
-│  │ ─ @supabase/auth-helpers-nextjs (login, session)                 │   │
-│  │ ─ @supabase/supabase-js (reads RLS + Realtime subscriptions)     │   │
-│  │ ─ lib/api.ts → llama al backend para writes IoT-related          │   │
-│  └────────────────────────┬─────────────────────────────────────────┘   │
-└───────────────────────────┼─────────────────────────────────────────────┘
-                            │  HTTPS
-                            ▼
+│  ┌───────────────────────────────────────┐   ┌───────────────────────┐  │
+│  │ bio-acoustic-frontend (Next.js 14)    │──▶│ Supabase              │  │
+│  │ Vercel                                │   │  Postgres             │  │
+│  │                                       │   │  Auth (JWT)           │  │
+│  │  app/api/*  Route Handlers            │   │  Storage (alerts)     │  │
+│  │  ├─ /api/ingest       (IoT)           │   │  Realtime (WebSocket) │  │
+│  │  ├─ /api/claim        (IoT)           │   └───────────────────────┘  │
+│  │  ├─ /api/heartbeat    (IoT)           │            ▲                  │
+│  │  ├─ /api/pairing-code (admin)         │            │                  │
+│  │  ├─ /api/admin/invite-user (existe)   │            │ reads RLS +      │
+│  │  └─ /api/... writes admin             │            │ Realtime         │
+│  │                                       │            │                  │
+│  │  lib/services/*   lógica testeable    │            │                  │
+│  │  lib/db/*         queries por dominio │            │                  │
+│  │  lib/validation/* zod schemas         │            │                  │
+│  │                                       │            │                  │
+│  │  app/dashboard, app/admin, app/login  │────────────┘                  │
+│  │  (SUPABASE_SERVICE_ROLE_KEY solo      │                                │
+│  │   accesible desde /api/*, server-only)│                                │
+│  └────────────────────┬──────────────────┘                                │
+└───────────────────────┼─────────────────────────────────────────────────┘
+                        │  HTTPS
+                        ▼
              Granjero (Farm Admin) / Super Admin (Ontiveros)
 ```
 
@@ -56,14 +52,13 @@ Tres capas independientes, comunicadas por HTTPS. Se reutiliza Supabase como Baa
 | Pieza | Stack | Hosting | Ownership |
 |---|---|---|---|
 | Nodos (edge) | C++ / PlatformIO | Hardware físico | 100% propia |
-| Backend | NestJS + Drizzle ORM (Postgres) + `@supabase/supabase-js` (Storage + Auth admin) | Railway | 100% propio (código) |
-| Base de datos | Postgres | **Supabase** (BaaS) | Portable (dump + restore a cualquier Postgres) |
-| Storage WAVs | Bucket S3-compatible | **Supabase Storage** | Portable a S3/R2 con migración script si algún día duele |
-| Auth | JWT emitido por Supabase Auth | Supabase | Portable con esfuerzo (~1 semana) |
-| Realtime | Supabase Realtime (WebSocket managed) | Supabase | Portable con esfuerzo (~1 semana) |
-| Frontend | Next.js 14 App Router | Vercel | 100% propio |
+| SaaS (frontend + API) | Next.js 14 App Router (RSC + Route Handlers) | Vercel | 100% propio |
+| Base de datos | Postgres | **Supabase** (BaaS) | Portable (dump + restore) |
+| Storage WAVs | Supabase Storage bucket `alerts` | Supabase | Portable a S3/R2 con migración script |
+| Auth | Supabase Auth (JWT + magic link) | Supabase | Portable con esfuerzo |
+| Realtime | Supabase Realtime | Supabase | Portable con esfuerzo |
 
-**Vendor lock-in aceptado a nivel Supabase (Auth + Realtime).** Postgres siempre es portable; Storage y Auth son las piezas donde salir cuesta más, pero se puede — sólo no es inmediato. A cambio, la Fase 0 pasa de 1-2 semanas a 3-5 días, y no hay superficie propia de Auth / WS que mantener y patchear.
+**Vendor lock-in aceptado en Supabase (Auth + Realtime).** Postgres siempre es portable. A cambio: cero deploy separado, cero env sync, Fase 0 en **~1 día**. Cuando el volumen fuerce extracción a backend Node/NestJS separado, la disciplina de estructurar en `lib/services/` + `lib/db/` hace que sea copy-paste, no rewrite.
 
 ---
 
@@ -126,16 +121,17 @@ Este plan aborda tres cambios interrelacionados:
 ## Decisiones ya confirmadas por el usuario
 
 - **Tabla de eventos:** ya existe (`events`, con 2 suscripciones Realtime activas). **Se extiende con columnas nuevas** en vez de crear una tabla nueva (auditoría 2026-07-05).
-- **Autenticación de subida:** endpoint `POST /ingest` **en un backend NestJS separado** (ver §G) con `X-Device-Token` por dispositivo. La `SUPABASE_SERVICE_ROLE_KEY` nunca sale del backend.
+- **Autenticación de subida:** endpoint `POST /api/ingest` **como Next.js Route Handler** (server-only) con `X-Device-Token` por dispositivo. La `SUPABASE_SERVICE_ROLE_KEY` vive en `.env.local` (server-only, sin prefijo `NEXT_PUBLIC_`).
 - **Ventana hacia atrás para etiquetar:** 30 s (constante `LABEL_BACKWARD_WINDOW_MS = 30000`).
 - **Modularizar `main.cpp`:** sólo si supera 1800 líneas tras las nuevas funcionalidades. Por defecto, monolítico.
-- **Backend separado desde ya:** se abre el paquete `bio-acoustic-backend/` (NestJS) como parte de la Fase 0. Justificación completa en §G.
+- **Sin backend separado en Fase 1 (revisado 2026-07-05):** todos los endpoints IoT y admin viven como Next.js Route Handlers en `bio-acoustic-frontend/app/api/*`. Estructura disciplinada (`lib/services/`, `lib/db/`, `lib/validation/`) para extracción futura barata si el volumen lo justifica. Ver §G y §G.8 (criterios de extracción).
 - **Supabase se mantiene como BaaS (Postgres + Auth + Storage + Realtime).** Neon y R2 descartados tras evaluación. Ver §G.7.
 - **Hardware target:** ESP32-S3-DevKitC-1-**N16R8** (ver sección Hardware objetivo arriba).
 - **Nombre de la rama:** `v2/full-stack` (renombrada desde `feature/sd-buffer-and-label-button`).
 - **Estructura del monorepo:** proyectos independientes (cada paquete con su `package.json`), sin npm/pnpm workspaces por ahora.
-- **Node runtime del backend:** **Node 22 LTS** (fijado en `engines` del `package.json` y en Railway).
-- **ORM del backend:** **Drizzle** apuntando a `DATABASE_URL` de Supabase. `@supabase/supabase-js` para Storage y Auth admin API.
+- **Runtime:** el del frontend Next.js (Node 20+ en Vercel). Sin Railway ni backend separado por ahora.
+- **Cliente Supabase en Route Handlers:** `@supabase/supabase-js` con `SUPABASE_SERVICE_ROLE_KEY` (server-only). Sin ORM por ahora — el volumen de queries en Route Handlers no lo requiere.
+- **Migraciones SQL:** vía `supabase-cli` con archivos versionados en `bio-acoustic-frontend/db/migrations/*.sql`. Aplicables con `supabase db push`.
 - **Emails transaccionales:** cubiertos por Supabase Auth desde el inicio (verificación, reset password). Sin proveedor externo por ahora.
 - **Proyecto Supabase para desarrollo v2:** se crea un **segundo proyecto** llamado `bio-alert-v2-dev` para aislar migraciones destructivas del proyecto productivo actual. El proyecto productivo (renombrado a `bio-alert`) sigue sirviendo `main`. Migración de datos en el cutover final (§H.4).
 - **Renombrar proyecto Supabase actual:** `ontiveros bio alert` → `bio-alert` (cosmético, cero downtime).
@@ -302,67 +298,48 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 
 > **Nota general de Fase 0 (aclarada 2026-07-05):** **NADA de este plan merge a `main` hasta que TODO esté validado en campo.** Todas las subfases (0-A a 0-F, y luego 1 a 8) viven en la rama, sin excepción. `main` conserva el estado actual (Supabase + Next.js + firmware v1) intacto hasta el corte final. Ver §H.
 
-### Fase 0-A — Bootstrap del backend `bio-acoustic-backend` (NestJS + Drizzle + Supabase)
-- Nuevo paquete `bio-acoustic-backend/` en la raíz del monorepo.
-- Scaffold: `nest new bio-acoustic-backend --package-manager npm --strict`.
-- Dependencias core: `drizzle-orm`, `drizzle-kit`, `postgres` (driver), `@supabase/supabase-js`, `helmet`, `class-validator`, `class-transformer`, `@nestjs/config`, `@nestjs/throttler`.
-- Node engine: fijar `>=22 <23` en `package.json`.
-- Módulos base:
-  - `AppModule` (config, helmet, ConfigModule con validación de env).
-  - `DatabaseModule` (Drizzle provider apuntando al `DATABASE_URL` de Supabase).
-  - `SupabaseModule` (cliente supabase-js singleton con `SERVICE_ROLE_KEY`, para Storage y Auth admin API).
-  - `AuthModule` (guards: `JwtSupabaseGuard` valida JWT de Supabase; `DeviceTokenGuard` valida `X-Device-Token` contra `devices.ingest_token`; `RoleGuard` chequea `super_admin` | `farm_admin`).
-  - Módulos placeholder: `DevicesModule`, `EventsModule`, `IngestModule`, `PairingModule`, `FarmsModule`, `SitesModule`, `BuildingsModule`, `RoomsModule`.
-- `.env.example`: `DATABASE_URL` (postgres URL de Supabase), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `PORT=3001`, `FRONTEND_URL`, `NODE_ENV`.
-- Health check: `GET /health` → `{ok, uptime, db: "connected"|"error", supabase: "reachable"|"error"}`.
-- CORS: permite `FRONTEND_URL` con `credentials: true`.
-- Deploy inicial a Railway con env vars configuradas.
-- Rate limit global: 100 req/min por IP (`@nestjs/throttler`).
-- Commit: `backend: scaffold NestJS + Drizzle + Supabase clients with health check`.
-
-### Fase 0-B — Migraciones incrementales sobre el schema existente
+### Fase 0-A — Migraciones incrementales en Supabase v2-dev
 > Se trabajará contra el **segundo proyecto Supabase `bio-alert-v2-dev`**, no el productivo.
 
-- Schema Drizzle en `bio-acoustic-backend/src/db/schema.ts` — importar/reflejar tablas existentes: `organizations`, `sites`, `buildings`, `rooms`, `devices`, `profiles`, `events`.
-- Migraciones incrementales (no rewrite):
-  - `ALTER TABLE devices ADD COLUMN ingest_token TEXT UNIQUE`.
-  - `ALTER TABLE devices ADD COLUMN last_seen TIMESTAMPTZ`.
-  - `ALTER TABLE events` para añadir las 9 columnas de audio (event_type, baseline_rms, peak_rms, dominant_freq_hz, temp_c, uptime_ms, audio_url, operator_label, metadata). Todas nullables.
-  - `CREATE TABLE pairing_codes` (nueva).
-- Herramienta: `drizzle-kit generate` produce `.sql` en `bio-acoustic-backend/db/migrations/`. `npm run db:migrate` aplica contra Supabase v2-dev.
-- **Verificar y endurecer RLS** de `events` y bucket `alerts` (si no lo están ya).
+- Setup `supabase-cli` en el repo: `supabase init` en la raíz o dentro de `bio-acoustic-frontend/`.
+- Link al proyecto v2-dev: `supabase link --project-ref <ref>`.
+- Crear migraciones versionadas en `db/migrations/*.sql`:
+  - `<ts>_add_ingest_token_to_devices.sql` → `ALTER TABLE devices ADD COLUMN ingest_token TEXT UNIQUE; ALTER TABLE devices ADD COLUMN last_seen TIMESTAMPTZ`.
+  - `<ts>_extend_events_with_audio_columns.sql` → las 9 columnas nullables (event_type, baseline_rms, peak_rms, dominant_freq_hz, temp_c, uptime_ms, audio_url, operator_label, metadata).
+  - `<ts>_create_pairing_codes.sql` → tabla nueva.
+  - `<ts>_harden_rls_events_and_alerts_bucket.sql` → verificar y endurecer RLS de `events` (SELECT por `farm_id`) y del bucket `alerts` (INSERT solo con service role, SELECT restringido por `farm_id` matching path).
+- `supabase db push` aplica al proyecto v2-dev.
+- Seed script mínimo en `db/seed.sql`: 1 super admin, 1 org test, 1 site/building/room, 1 device paireable.
 - Actualizar `docs/supabase_schema.sql` con snapshot post-migración.
-- Seed script mínimo: 1 super admin, 1 org test, 1 site/building/room, 1 device paireable — para poder probar Fase 5 end-to-end.
 - Commit: `db: incremental migrations for v2 (events cols + pairing_codes + devices.ingest_token)`.
 
-### Fase 0-C — Extraer escrituras del frontend al backend (scope reducido)
-> Reducido tras auditoría: solo ~10 funciones write-path se mueven; reads, auth y Realtime siguen directas.
+### Fase 0-B — Reorganizar `lib/supabase.ts` en módulos + añadir validación
+> Refactor sin cambio funcional. Prepara el terreno para extracción futura barata y para que las Route Handlers de fases posteriores tengan una capa limpia sobre la que apoyarse.
 
-- Migrar al backend NestJS **solo estas funciones** de `lib/supabase.ts`:
-  - `createOrganization`, `createSite`, `createBuilding`, `updateBuilding`, `deleteBuilding`.
-  - `createRoom`, `updateRoom`, `deleteRoom`.
-  - `claimDeviceToRoom`, y el update/delete de devices si los hay.
-- Endpoints correspondientes en NestJS: `OrganizationsController`, `SitesController`, `BuildingsController`, `RoomsController`, `DevicesController` — cada uno con guards `JwtSupabaseGuard` + `RoleGuard`.
-- **Se quedan intactas en el frontend (directas a Supabase):**
-  - Auth (`signIn`, `signOut`, `getUser`).
-  - Todas las lecturas RLS-safe (`getAllOrganizations`, `getSitesByOrganization`, `getDevicesByRoom`, etc.).
-  - Suscripciones Realtime en `dashboard/page.tsx:132` y `admin/sites/[site_id]/page.tsx:229`.
-  - `supabase.storage.from('alerts').createSignedUrl` para playback de WAVs.
-- Nuevo `bio-acoustic-frontend/lib/api.ts` con métodos tipados que apuntan a `NEXT_PUBLIC_BACKEND_URL`, envían JWT Supabase en `Authorization: Bearer <token>`.
-- Sustituir las llamadas write en las páginas admin (`app/admin/page.tsx`, `app/admin/sites/[site_id]/page.tsx`, `app/admin/inventory/page.tsx`) por `api.*` en vez de imports directos de `lib/supabase.ts`.
-- `lib/supabase.ts` debería quedar en ~400-500 líneas (sólo reads + auth + realtime helpers).
-- **Adaptar `app/api/v1/telemetry/route.ts`:** decidir en implementación si se elimina (backend ya expone `/ingest` propio) o se reapunta como proxy compatibilidad hacia atrás.
-- Commit: `frontend+backend: extract write-path to NestJS, reads and realtime stay direct`.
+- **Nueva estructura de directorios en `bio-acoustic-frontend/lib/`:**
+  - `lib/supabase/{client.ts,server.ts}` — clientes browser y server-only (con service role).
+  - `lib/db/{organizations,sites,buildings,rooms,devices,events,profiles,pairing_codes}.ts` — queries agrupadas por dominio. Cada archivo exporta funciones tipadas.
+  - `lib/services/` — vacío por ahora, se irá poblando en fases siguientes con `ingest.service.ts`, `pairing.service.ts`, etc.
+  - `lib/validation/` — schemas zod para inputs de Route Handlers. Vacío por ahora.
+- **Migración de las 21 funciones actuales** de `lib/supabase.ts`:
+  - Reads (`getAllOrganizations`, `getSitesByOrganization`, `getDevicesByRoom`, etc.) → `lib/db/<dominio>.ts` (sin cambio de firma).
+  - Writes (`createOrganization`, `createSite`, `createBuilding`, `claimDeviceToRoom`, etc.) → también `lib/db/<dominio>.ts`.
+  - Auth helpers (`getCurrentUserProfile`, `isSuperAdmin`, `getUserOrganization`) → `lib/db/profiles.ts` o `lib/auth.ts`.
+- **Añadir zod al proyecto:** `npm i zod`. Placeholder `lib/validation/organization.schema.ts` con un schema simple como ejemplo del patrón.
+- **`lib/supabase.ts` queda vacío o eliminado.** Los imports actuales en el frontend se redireccionan a los nuevos módulos con un search-and-replace ordenado.
+- Sin tocar lógica: sólo mover, no reescribir.
+- Verificar que `npm run build` y las 7 páginas siguen funcionando idénticas.
+- Commit: `frontend: reorganize lib/supabase.ts into per-domain modules + add zod`.
 
-### Fase 0-D — Endurecimiento de seguridad y deuda técnica del frontend
-> Añadida tras auditoría: el frontend actual tiene 2 problemas conocidos que conviene tratar antes de que la app v2 salga a producción.
+### Fase 0-C — Endurecimiento de seguridad y deuda técnica
+- **Nuevo `bio-acoustic-frontend/middleware.ts`** — protege `/dashboard/*` y `/admin/*` con validación server-side del JWT Supabase (usando `createServerClient` de `@supabase/ssr` o el equivalente vigente). Redirige a `/login` si no hay sesión. Cierra el hueco de auth solo client-side.
+- **`next.config.ts`:** intentar quitar `ignoreBuildErrors: true`. Fixear los TS errors reales que aparezcan. Si alguno requiere refactor grande, dejarlo con comentario explicando y un TODO.
+- **`app/api/v1/telemetry/route.ts`:** eliminar (es un proxy fantasma a `localhost:3000` que no se va a usar). El endpoint IoT real es `/api/ingest`, se implementa en Fase 5.
+- **`docs/skill_backend_nestjs.md`:** añadir nota al principio "ARCHIVADO 2026-07-05: NestJS no se implementa en Fase 1. Ver `docs/plan_sd_buffer_label_button.md` §G para el estado actual".
+- Verificación: en incógnito, navegar a `/dashboard` sin login → redirect a `/login`. Login → dashboard funciona. Navegar a `/admin` sin ser super_admin → 403 o redirect.
+- Commit: `frontend: add auth middleware + tighten TS build + clean tech debt`.
 
-- **Nuevo `bio-acoustic-frontend/middleware.ts`** — protege `/dashboard/*` y `/admin/*` con validación server-side del JWT Supabase (usando `@supabase/auth-helpers-nextjs`). Redirige a `/login` si no hay sesión válida. Elimina la ventana de vulnerabilidad de auth solo client-side.
-- **Revisar `next.config.ts`:** `ignoreBuildErrors: true` estaba puesto para desplegar rápido. Fixear los TS errors reales y desactivarlo. Si algún error es imposible de arreglar sin refactor grande, dejarlo con comentario explicando por qué.
-- **Revisar deuda técnica de rutas:** verificar si `/dashboard/settings/farm` está completa o es stub; si es stub, marcar como TODO explícito o eliminar hasta que se implemente.
-- Commit: `frontend: add auth middleware + tighten TS build + doc technical debt`.
-
-**Duración estimada de Fase 0 completa (revisada 2026-07-05):** ~2-3 días con asistencia de IA (mucho menos que la estimación inicial porque el frontend ya está ~40% hecho).
+**Duración estimada Fase 0 completa (revisada 2026-07-05):** **~1 día con asistencia de IA.**
 
 ### Fase 1 — Refactor mínimo de `buttonTask`
 - Introducir `struct Button` + array de dos entradas en `main.cpp`.
@@ -414,11 +391,10 @@ Reemplaza el hardcoding de credenciales por un flujo de comisionado que el granj
 - Estado `STATE_PAIRING` reutilizado del CONTEXT.MD (ya tiene patrón LED asignado).
 - Reset de credenciales: **pulsación larga simultánea de BTN_SYNC + BTN_LABEL durante 5 s** → borra NVS y reinicia en pairing. Nuevo caso a integrar en `buttonTask`.
 
-**Componentes backend (NestJS, módulo `PairingModule`):**
-- `POST /pairing-code` — requiere JWT del usuario (Farm Admin). Genera código de 6 dígitos, guarda en tabla `pairing_codes` con TTL 10 min, `farm_id` y `room_id` que el admin eligió.
-- `POST /claim` — público (sin JWT, se apoya en el código). Recibe `{mac, code}`, valida vigencia, UPSERT en `devices` (crea la fila si no existe con esa MAC), genera `ingest_token` con `crypto.randomBytes(24).toString('hex')`, marca el código como `used_at = now()`, responde `{ok: true, ingest_token, ingest_url}`.
-- La lógica de UPSERT reutiliza el `DevicesService` de Fase 0-C.
-- **Frontend:** vista "Aparear nuevo nodo" en `bio-acoustic-frontend/app/admin/devices/pair/page.tsx` que llama a `POST /pairing-code` y muestra el código en pantalla + un QR opcional.
+**Componentes API (Next.js Route Handlers):**
+- `POST /api/pairing-code` (`app/api/pairing-code/route.ts`) — requiere JWT del usuario (Farm Admin), validado por middleware o server-side supabase-js. Genera código de 6 dígitos, guarda en `pairing_codes` con TTL 10 min, `farm_id` y `room_id`. Lógica en `lib/services/pairing.service.ts`.
+- `POST /api/claim` (`app/api/claim/route.ts`) — público (sin JWT, se apoya en el código). Recibe `{mac, code}`, valida vigencia, UPSERT en `devices` (usa `SUPABASE_SERVICE_ROLE_KEY` server-only), genera `ingest_token` con `crypto.randomBytes(24).toString('hex')`, marca el código como `used_at = now()`, responde `{ok, ingest_token, ingest_url}`.
+- **Frontend:** vista "Aparear nuevo nodo" en `bio-acoustic-frontend/app/admin/devices/pair/page.tsx` que llama a `/api/pairing-code` y muestra el código + QR opcional.
 
 **Seguridad del pairing:**
 - Códigos de 6 dígitos son de un solo uso (`used_at` no null → rechazo).
@@ -433,21 +409,25 @@ Reemplaza el hardcoding de credenciales por un flujo de comisionado que el granj
 - Reset de fábrica: BTN_SYNC + BTN_LABEL 5 s → NVS limpia, vuelve a pairing.
 - Commit: `firmware+frontend: captive portal provisioning + 6-digit pairing claim`.
 
-### Fase 5 — Endpoint `POST /ingest` (backend NestJS, módulo `IngestModule`)
-> Se apoya en el `ingest_token` obtenido en Fase 4-bis y en el scaffold de Fase 0-A.
+### Fase 5 — Endpoint `POST /api/ingest` (Next.js Route Handler)
+> Se apoya en el `ingest_token` obtenido en Fase 4-bis y en los módulos `lib/db/*` y `lib/services/*` creados en Fase 0-B.
 
-- Controller `IngestController` con guard `DeviceTokenGuard`:
-  - `POST /ingest` con `multipart/form-data` (`audio` = WAV, `meta` = JSON string).
-  - Body size limit 512 KB (WAV de 8 s = 256 KB, margen 2×).
-  - **Streaming del WAV a Supabase Storage** vía `supabase.storage.from('alerts').upload(path, stream)`: path = `<mac>/<yyyy-mm>/<filename>.wav`. **No cargar el WAV entero en memoria** — pipe del stream de multer.
-  - INSERT en `acoustic_events` con `audio_url = <path>` y todos los metadatos.
-  - Al INSERT, **Supabase Realtime automáticamente publica** el evento a todos los clientes suscritos con matching `farm_id`. El backend no hace broadcast manual.
-  - Responde `{ok: true, event_id: uuid}` o error tipado (`400 BAD_TOKEN`, `413 TOO_LARGE`, `500 STORAGE_FAILED`, `500 DB_FAILED`).
-  - Atomicidad: si el INSERT en Postgres falla tras subir el WAV, borrar el objeto del bucket (compensación). Si el upload falla, no toca la DB.
-- Rate limit por dispositivo: 30 req/min (protección contra bugs de firmware que reintenten en bucle).
-- Log estructurado (JSON) para inspección: `{level, event, device_mac, event_type, size, latency_ms}`.
-- Prueba: `curl -F "audio=@test.wav" -F 'meta={...}' -H "X-Device-Token: xxx" http://localhost:3001/ingest`.
-- Commit: `backend: add /ingest endpoint with Supabase Storage upload and atomic event insert`.
+- `app/api/ingest/route.ts` con la siguiente responsabilidad DELGADA:
+  1. Extraer y validar `X-Device-Token` (contra `devices.ingest_token`, servicio en `lib/services/device-auth.service.ts`).
+  2. Parsear `multipart/form-data` con `Request.formData()` (nativo en Next.js 14+).
+  3. Validar `meta` con zod (`lib/validation/ingest.schema.ts`).
+  4. Delegar en `lib/services/ingest.service.ts` toda la lógica.
+- **`lib/services/ingest.service.ts`:**
+  - Upload del WAV a Supabase Storage: `alerts/<mac>/<yyyy-mm>/<filename>.wav`.
+  - INSERT en `events` con las 9 columnas nuevas rellenas.
+  - Al INSERT, **Supabase Realtime publica automáticamente** el evento a las 2 suscripciones ya activas del frontend.
+  - Atomicidad: si INSERT falla tras upload, borrar objeto de bucket (compensación).
+- Respuestas tipadas: `200 {ok, event_id}`, `400 BAD_TOKEN`, `413 TOO_LARGE`, `500 STORAGE_FAILED`, `500 DB_FAILED`.
+- Body size max: 512 KB (WAV 8 s = 256 KB, margen 2×). Configurar en `route.ts` con `export const runtime = 'nodejs'` + `export const maxDuration = 30`.
+- Rate limit por device (`X-Device-Token` como clave): 30 req/min, implementación con `@upstash/ratelimit` (o Vercel KV) — **evaluar en implementación**; si es fricción, dejarlo para Fase 8.
+- Log estructurado JSON con `console.log(JSON.stringify(...))` (Vercel lo captura).
+- Prueba: `curl -F "audio=@test.wav" -F 'meta={...}' -H "X-Device-Token: xxx" https://<preview>.vercel.app/api/ingest`.
+- Commit: `frontend: add /api/ingest route handler with Supabase Storage upload and atomic event insert`.
 
 ### Fase 6 — `uploaderTask` en firmware
 - Nueva task en Core 1, prioridad 1.
@@ -484,26 +464,37 @@ Reevaluar tras Fase 6. Si `main.cpp` > 1800 líneas, dividir en `audio.cpp`, `sd
 - `firmware/bio-acoustic-health/include/secrets.h.example` (nuevo, sólo `INGEST_URL` + opcional root CA).
 - `firmware/bio-acoustic-health/.gitignore` (añadir `include/secrets.h`).
 
-**Backend nuevo (`bio-acoustic-backend`):**
-- Todo el paquete (raíz del monorepo, hermano de `bio-acoustic-frontend/`).
-- `bio-acoustic-backend/src/db/{schema.ts,client.ts}` (Drizzle apuntando a Supabase Postgres).
-- `bio-acoustic-backend/src/supabase/supabase.module.ts` (cliente supabase-js con service role para Storage + Auth admin).
-- `bio-acoustic-backend/src/auth/guards/{jwt-supabase,role,device-token}.guard.ts`.
-- `bio-acoustic-backend/src/modules/{farms,sites,buildings,rooms,devices,events,ingest,pairing}/`.
-- `bio-acoustic-backend/db/migrations/*.sql` (generadas por drizzle-kit).
+**Frontend (`bio-acoustic-frontend`) — todo vive aquí:**
 
-**Frontend (`bio-acoustic-frontend`):**
-- **Mantiene:** dependencias `@supabase/*`. Auth + reads + Realtime + signed URLs siguen directas contra Supabase.
-- **`lib/supabase.ts`** — se **adelgaza** a <300 líneas (queda sólo: cliente, reads, realtime, storage signed URLs, auth helpers).
-- **Nuevo:** `lib/api.ts` (cliente REST tipado del backend, envía JWT Supabase en Authorization).
-- `app/api/v1/telemetry/route.ts` — revisar y reapuntar al backend Railway o eliminar si redundante.
-- `app/admin/devices/pair/page.tsx` (nueva vista de pairing).
+Migraciones y schema:
+- `db/migrations/*.sql` (nuevas, versionadas con supabase-cli).
+- `db/seed.sql` (semillas para dev).
+
+Reorganización de código existente:
+- `lib/supabase/{client.ts, server.ts}` (nuevo, reemplaza `lib/supabase.ts`).
+- `lib/db/{organizations,sites,buildings,rooms,devices,events,profiles,pairing_codes}.ts` (nuevo, funciones extraídas del viejo `lib/supabase.ts`).
+- `lib/services/{ingest,pairing,device-auth,heartbeat}.service.ts` (creados en fases siguientes).
+- `lib/validation/*.schema.ts` (zod, se irán añadiendo).
+- `lib/supabase.ts` (eliminar tras migración).
+
+Nuevos endpoints (fases posteriores):
+- `app/api/ingest/route.ts` (Fase 5).
+- `app/api/claim/route.ts` (Fase 4-bis).
+- `app/api/pairing-code/route.ts` (Fase 4-bis).
+- `app/api/heartbeat/route.ts` (opcional, Fase 6).
+- `app/admin/devices/pair/page.tsx` (Fase 4-bis, nueva vista pairing).
+- `middleware.ts` (Fase 0-C).
+
+A eliminar:
+- `app/api/v1/telemetry/route.ts` (proxy fantasma).
 
 **Documentación (todo en la rama, no en main):**
-- `CONTEXT.MD` — se actualiza **en la rama** con hardware N16R8 y sección "Backend NestJS + Supabase" (v2). El CONTEXT.MD de main se actualiza sólo al hacer el corte final (§H.4).
-- `docs/supabase_schema.sql` — actualizado con las nuevas tablas (en la rama).
-- `docs/planificacion.md` — archivo histórico, sin cambios.
-- `docs/plan_sd_buffer_label_button.md` — este documento; puede permanecer en main como referencia porque no cambia código.
+- `CONTEXT.MD` — actualizado con hardware N16R8 y sección "Route Handlers como API". El CONTEXT.MD de main se actualiza sólo al cutover (§H.4).
+- `docs/supabase_schema.sql` — actualizado con las nuevas columnas/tablas (en la rama).
+- `docs/planificacion.md` — archivo histórico.
+- `docs/plan_sd_buffer_label_button.md` — este documento.
+- `docs/skill_backend_nestjs.md` — marcado como archivado en Fase 0-C.
+- `docs/setup_accounts.md` — actualizado sin Railway.
 
 ## Funciones/utilidades existentes a reutilizar
 
@@ -521,82 +512,101 @@ Reevaluar tras Fase 6. Si `main.cpp` > 1800 líneas, dividir en `audio.cpp`, `sd
 
 | Fase | Cómo probar |
 |---|---|
-| 0-A | `curl http://localhost:3001/health` responde 200 con `db: "connected"` y `supabase: "reachable"`. `curl -H "X-Device-Token: bad" .../devices` responde 401. |
-| 0-B | En Supabase Studio de `bio-alert-v2-dev`: `events` con las 9 columnas nuevas visibles, `pairing_codes` creada, `devices.ingest_token` + `devices.last_seen` presentes. Filas existentes de `events` intactas. `npm run db:migrate` idempotente. |
-| 0-C | Frontend sigue funcionando: dashboard, listados, admin panel intactos. `lib/supabase.ts` ~400-500 líneas. Crear org/site/building/room/claim device pasa por backend. Realtime + reads + auth siguen directos a Supabase. |
-| 0-D | En incógnito: navegar a `/dashboard` sin login → redirect a `/login`. Navegar a `/admin` sin ser super_admin → 403 o redirect. `npm run build` pasa con TS strict (o los errores restantes están documentados en un TODO). |
+| 0-A | En Supabase Studio de `bio-alert-v2-dev`: `events` con las 9 columnas nuevas, `pairing_codes` creada, `devices.ingest_token` + `devices.last_seen` presentes. Filas existentes intactas. `supabase db push` idempotente. Seed pobla 1 org/site/room/device. |
+| 0-B | Frontend sigue funcionando idéntico: 7 páginas OK, dashboard con Realtime OK, admin panel OK. `lib/supabase.ts` desaparece. Imports actualizados en 7 páginas apuntando a `lib/db/*` y `lib/supabase/client.ts`. `npm run build` pasa. zod instalado, un schema de ejemplo. |
+| 0-C | En incógnito: `/dashboard` sin login → redirect a `/login`. `/admin` sin ser super_admin → 403. `npm run build` con `ignoreBuildErrors: false` pasa (o los que queden documentados). `app/api/v1/telemetry/route.ts` eliminado. |
 | 1 | Serial monitor: BTN_SYNC (clic corto → PAUSED; clic largo → toggle sensibilidad) funciona idéntico a hoy. |
 | 2 | Grabar 3 alertas. Clic durante REC → CSV muestra `crushing` en esa fila. Clic <30 s después → `.meta.json` de la última se actualiza. Clic 60 s después → LED rojo, sin cambios. |
 | 3 | Reboot: `ls /pending/` muestra 3 pares `.wav`/`.meta.json`; CSV y estados intactos. |
 | 4 | Al boot con NVS válida: `[WIFI] Conectado, IP: x.x.x.x, RSSI: -55`. Sin NVS: entra a `STATE_PAIRING` y levanta AP. |
 | 4-bis | Nodo sin credenciales → SSID `BioAlert-A3F2` visible. Portal aparece solo al conectar el móvil. Código válido → nodo se conecta y aparece "Online" en el portal SaaS en <30 s. Código expirado → LED rojo 2 s. Reset (BTN_SYNC+BTN_LABEL 5s) → NVS limpia. |
-| 5 | `curl -X POST -F "audio=@sample.wav" -F 'meta={...}' -H "X-Device-Token: dev-token-abc" http://localhost:3001/ingest` → 200 con `event_id`; fila visible en `acoustic_events`; WAV visible en bucket `alerts/<mac>/<yyyy-mm>/`; navegador con Realtime activo recibe el evento en <2 s. |
+| 5 | `curl -X POST -F "audio=@sample.wav" -F 'meta={...}' -H "X-Device-Token: dev-token-abc" https://<preview>.vercel.app/api/ingest` → 200 con `event_id`; fila visible en `events` con las 9 columnas rellenas; WAV visible en bucket `alerts/<mac>/<yyyy-mm>/`; navegador con Realtime activo recibe el evento en <2 s. |
 | 6 | Grabar alerta → tras <60 s el WAV desaparece de `/pending/`, aparece en bucket, fila en `acoustic_events` con etiqueta correcta. |
 | 7 | Cortar WiFi 5 min y grabar 3 alertas → cola de 3 en `/pending/`. Reconectar → drena en secuencia. Reboot mid-drenaje → reconstruye cola y continúa. |
 | 8 | Llenar SD manualmente hasta 45 MB de `/pending/` → descarte FIFO logueado; nuevas alertas siguen entrando. |
 
 ---
 
-## G. Decisión arquitectónica — Supabase + backend NestJS delgado (revisión final 2026-07-05)
+## G. Decisión arquitectónica — Supabase + Next.js Route Handlers (revisión final 2026-07-05)
 
 ### G.1 Qué se está planteando
 
-Se conserva Supabase como BaaS (Postgres + Auth + Storage + Realtime) y se añade un backend NestJS delgado que concentra los endpoints IoT y las escrituras de admin:
+Se conserva Supabase como BaaS (Postgres + Auth + Storage + Realtime). **Sin backend separado**. Todos los endpoints IoT y admin viven como Next.js Route Handlers en `bio-acoustic-frontend/app/api/*`:
 
-- **Backend:** NestJS en `bio-acoustic-backend/`, desplegado en **Railway**.
-- **Base de datos:** **Supabase Postgres** (sin cambio respecto a la actual).
-- **ORM en el backend:** **Drizzle** apuntando al `DATABASE_URL` de Supabase (usa `SERVICE_ROLE_KEY` para bypass de RLS en operaciones de escritura). Alternativa aceptable: `@supabase/supabase-js` con service role para todo. Drizzle se prefiere para queries no triviales; supabase-js se usa cuando toca Storage o Auth admin API.
-- **Storage de WAVs:** **Supabase Storage**, bucket `alerts`. Endurecido: INSERT sólo con service role (desde backend), SELECT restringido por `farm_id` vía RLS.
-- **Auth:** Supabase Auth (JWT + email + password, magic link opcional después). El frontend usa `@supabase/auth-helpers-nextjs`. El backend valida JWTs de Supabase con el JWT secret o llamando a `auth.getUser()`.
-- **Realtime:** Supabase Realtime. El frontend se suscribe directamente a `acoustic_events` filtrado por `farm_id`. El backend no gestiona WebSockets — RLS filtra automáticamente.
-- **Frontend:** Next.js 14 en Vercel, mantiene `@supabase/*` para lecturas RLS-safe + Realtime. Añade `lib/api.ts` para llamadas al backend en el path de escritura.
+- Auth flows y lecturas RLS-safe: directas frontend → Supabase (como hoy).
+- Realtime: suscripciones directas frontend → Supabase Realtime (como hoy).
+- Escrituras que requieran `SERVICE_ROLE_KEY` (bypass de RLS): Route Handlers server-only (`SUPABASE_SERVICE_ROLE_KEY` sin prefijo `NEXT_PUBLIC_`, jamás llega al bundle cliente).
+- Endpoints IoT (firmware): Route Handlers con guard de `X-Device-Token`.
 
-Es un **backend delgado** — sólo escrituras + IoT. Las lecturas RLS-safe se quedan directas frontend→Supabase.
+**Disciplina de estructura para extracción futura barata:**
 
-### G.2 Historia de la decisión
+```
+bio-acoustic-frontend/
+├── app/api/*/route.ts       ← handlers DELGADOS: parse + validate + call service
+├── lib/services/*.ts        ← lógica de negocio testeable (independiente del framework)
+├── lib/db/*.ts              ← queries agrupadas por dominio (devices, events, ...)
+└── lib/validation/*.ts      ← zod schemas
+```
 
-1. **Primera propuesta (mía):** Supabase + backend NestJS delgado.
-2. **Reversión intermedia (del usuario, misma sesión):** stack de máximo control con Neon + R2 + auth propia + WS propio. Argumento: priorizar control > velocidad, y compensar el tiempo extra con asistencia IA.
-3. **Reversión final (del usuario, misma sesión):** volver a Supabase. Se acepta el consejo original tras evaluar el volumen real de trabajo previo (Auth y WS propios como campo minado + operación 24/7).
+El día que se extraiga un backend Node/NestJS separado, `lib/services/` y `lib/db/` se copian sin cambios funcionales. Route Handlers se convierten en Controllers.
 
-Documentar el vaivén evita re-litigar la decisión en 3 meses.
+### G.2 Historia de la decisión (4 iteraciones)
 
-### G.3 Ventajas asumidas de esta ruta
+1. **Primera propuesta (mía, 2026-07-05):** Supabase + backend NestJS delgado.
+2. **Reversión 1 (usuario):** máximo control con Neon + R2 + auth y WS propios. Priorizar control > velocidad.
+3. **Reversión 2 (usuario):** volver a Supabase + NestJS. Auth y WS propios como campo minado + operación 24/7.
+4. **Reversión final (usuario, misma sesión):** eliminar NestJS. Para Fase 1 (dataset builder, volumen bajo), Next.js Route Handlers bastan. YAGNI.
 
-1. **Fase 0 se reduce a 3-5 días** (vs 1-2 semanas del stack propio). El firmware v2 puede empezar antes.
-2. **Cero superficie propia de Auth.** Sin timing attacks, sin CSRF propio, sin rotación de refresh tokens que operar.
-3. **Realtime "gratis".** Suscripción declarativa en el frontend; el backend ni ve los WebSockets.
-4. **Emails transaccionales integrados.** Supabase Auth envía verificación, reset password, magic link sin proveedor extra.
-5. **Panel Supabase Studio para inspección.** Buscar eventos, revisar usuarios, ejecutar SQL, sin instalar TablePlus.
-6. **Backups automáticos** (según plan Supabase). El free tier tiene backups de 7 días; los pagos tienen PITR.
+Documentar el vaivén evita re-litigar en 3 meses.
 
-### G.4 Trade-offs aceptados
+### G.3 Ventajas de esta ruta (post reversión final)
 
-- **Vendor lock-in parcial en Auth y Realtime.** Migrar Auth cuesta ~1 semana; migrar Realtime, otra semana. No es imposible, pero no es una tarde.
-- **Coste crece con volumen.** Supabase free tier basta hasta ~500 MB DB + 1 GB Storage. Se escala a Pro ($25/mes) cuando el dataset crezca. Aceptable.
-- **`SUPABASE_SERVICE_KEY` en el backend** — se aísla en Railway env vars, nunca en el frontend ni en el firmware.
+1. **Fase 0 se reduce a ~1 día** (vs 2-3 días con NestJS, vs 1-2 semanas con stack propio).
+2. **Un solo deploy** (Vercel). Cero cuenta Railway, cero env sync entre dos servicios.
+3. **Cero superficie propia de Auth o WS.** Supabase lo cubre.
+4. **Emails transaccionales** integrados en Supabase Auth.
+5. **Aprovecha el ~40% del SaaS ya construido** en el frontend.
 
-### G.5 Por qué NestJS y no Hono / Fastify / Express
+### G.4 Criterios para extraer backend separado en el futuro
 
-- Ya existe `docs/skill_backend_nestjs.md` con la elección documentada.
-- DI + guards + interceptors modelan bien: `DeviceTokenGuard`, `JwtSupabaseGuard`, `RateLimitInterceptor`, `LoggingInterceptor`.
-- Módulos por dominio hacen predecible dónde vive cada cosa.
-- Verbosidad aceptada; se paga sólo una vez.
+Extraer a backend Node/NestJS separado cuando **cualquiera** se cumpla:
+
+1. **>50 uploads/minuto sostenidos** — Vercel serverless empieza a fricción.
+2. **Aparece necesidad de jobs periódicos** — cron para agregaciones, retrainings de modelo.
+3. **Modelo ML en servidor** — necesita proxy de inferencia (Python FastAPI o Node con GPU).
+4. **WebSocket custom** que Supabase Realtime no cubra (poco probable).
+5. **Body upload >4.5 MB** — WAVs más largos o compresión diferente.
+
+Cualquiera de esos dispara un plan aparte. Hasta entonces, Route Handlers.
+
+### G.5 Trade-offs aceptados
+
+- **Vercel Functions límites** — 10s hobby / 60s Pro / 4.5 MB body. Suficiente para dataset builder (WAV 256 KB × 1-10 uploads simultáneos).
+- **Cold starts** — molestan pero el firmware ya tiene retry con back-off.
+- **Vendor lock-in en Supabase Auth + Realtime.** Migrar cuesta ~2 semanas si algún día toca. Aceptado.
+- **Cuando escale, hay que extraer.** No es "para siempre". Los criterios de G.4 son la señal.
 
 ### G.6 Qué se hace explícitamente NO en este plan
 
-- Reemplazar todas las lecturas del frontend por llamadas al backend. Se conservan las lecturas RLS-safe directas — son rápidas y seguras.
-- OAuth (Google, Apple). Sólo email + password en la v1. Se añade después con un click en Supabase Studio si hace falta.
-- Multi-región. Un solo deploy en Railway EU.
-- gRPC / GraphQL / tRPC. REST + JSON basta.
+- OAuth (Google, Apple). Sólo email + password en v1.
+- Multi-región.
+- gRPC / GraphQL / tRPC.
 - Redis / colas asíncronas / Kafka. La cola vive en la SD del nodo (Fase 6-7).
+- Backend NestJS separado (por ahora — ver G.4 para cuándo).
+- ORM (Drizzle/Prisma). El volumen de queries en Route Handlers no lo requiere. `supabase-js` con service role basta.
 
 ### G.7 Qué se descarta explícitamente
 
-- **Neon:** descartado. Volveremos a evaluarlo si algún día el volumen supera 10M rows/mes o si necesitamos DB branching para experimentos ML.
-- **Cloudflare R2:** descartado en v2. Podría considerarse en el futuro sólo si el egress de Supabase Storage se vuelve caro (que requiere volumen serio).
-- **Auth propia con JWT + argon2:** descartada. Supabase Auth cubre todos los casos que necesitamos.
-- **WebSocket gateway propio:** descartado. Supabase Realtime lo hace mejor y sin código a mantener.
+- **Neon:** descartado. Reevaluar si vol >10M rows/mes.
+- **Cloudflare R2:** descartado. Reevaluar si el egress de Supabase Storage duele.
+- **Auth propia:** descartada. Supabase Auth cubre.
+- **WebSocket gateway propio:** descartado. Supabase Realtime cubre.
+- **NestJS + Railway en Fase 1:** descartado. Ver G.4 para cuándo reevaluar.
+- **Drizzle ORM:** descartado por ahora. Volumen no lo justifica. Reevaluar cuando se extraiga backend.
+
+### G.8 `docs/skill_backend_nestjs.md`
+
+Ese doc queda **desactualizado**. Se marca como archivo histórico. No se elimina para preservar el rastro de la decisión.
 
 ---
 

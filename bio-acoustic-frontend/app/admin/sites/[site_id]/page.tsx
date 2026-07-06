@@ -16,8 +16,6 @@ import {
   deleteRoom,
   supabase,
   Event,
-  Building,
-  Room,
   Device,
   SiteWithOrganization
 } from "@/lib/supabase";
@@ -41,44 +39,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { AdminIoTSimulator } from "@/components/admin/admin-iot-simulator";
-import { 
+import {
   ArrowLeft,
   Building2,
   Home,
   Cpu,
-  Activity,
   AlertTriangle,
   CheckCircle2,
   MapPin,
-  Wifi,
-  WifiOff,
   Plus,
-  MoreVertical,
-  Edit2,
-  Trash2,
   Save,
   RefreshCw
 } from "lucide-react";
 import { EventsTable } from "@/components/dashboard/events-table";
 import { AlertsChart } from "@/components/dashboard/alerts-chart";
+import { BuildingRoomTree } from "@/components/site-tree/building-room-tree";
+import type { BuildingWithRooms } from "@/components/site-tree/types";
 import { toast } from "sonner";
 
 export const dynamic = 'force-dynamic';
-
-interface RoomWithDevices extends Room {
-  devices: Device[];
-}
-
-interface BuildingWithRooms extends Building {
-  rooms: RoomWithDevices[];
-}
 
 type DialogMode = 'add_building' | 'add_room' | 'edit_building' | 'edit_room' | 'claim_device' | null;
 
@@ -424,12 +404,6 @@ export default function SiteInspectionPage() {
     return lastHeartbeat > tenMinutesAgo;
   };
 
-  const hasOfflineDevices = (building: BuildingWithRooms) => {
-    return building.rooms.some(room => 
-      room.devices.some(device => !isDeviceOnline(device))
-    );
-  };
-
   const formatHeartbeat = (heartbeat: string | null) => {
     if (!heartbeat) return 'Nunca';
     const date = new Date(heartbeat);
@@ -626,242 +600,45 @@ export default function SiteInspectionPage() {
         <div className="flex items-center justify-between mt-12 animate-in-view stagger-5">
           <h2 className="text-xl font-bold tracking-tight">Infraestructura IoT</h2>
         </div>
-        {buildings.length === 0 ? (
-          <Card className="glass-effect">
-            <CardContent className="py-12 text-center">
-              <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" strokeWidth={1.5} />
-              <p className="text-lg font-medium text-muted-foreground">Sin buildings registrados</p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Este site aún no tiene estructura configurada.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-6">
-            {buildings.map((building) => {
-              const hasOffline = hasOfflineDevices(building);
-              const buildingDevices = building.rooms.reduce((sum, r) => sum + r.devices.length, 0);
-              const buildingOnline = building.rooms.reduce(
-                (sum, r) => sum + r.devices.filter(d => isDeviceOnline(d)).length, 
-                0
-              );
-
-              return (
-                <Card 
-                  key={building.id} 
-                  className={`glass-effect transition-all duration-300 ${
-                    hasOffline ? 'border-red-500/50 bg-red-500/5' : 'hover:border-primary/30'
-                  }`}
-                >
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Building2 className={`h-6 w-6 ${hasOffline ? 'text-red-500' : 'text-primary'}`} strokeWidth={2} />
-                        <div>
-                          <CardTitle className="text-lg">{building.name}</CardTitle>
-                          {building.building_type && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Tipo: {building.building_type}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge className={hasOffline ? 'alert-danger' : 'alert-success'}>
-                          {buildingOnline}/{buildingDevices} Online
-                        </Badge>
-                        {isSuperAdmin && (
-                          <>
-                            <Button
-                              size="sm"
-                              onClick={() => openDialog('add_room', { buildingId: building.id })}
-                            >
-                              <Plus className="h-4 w-4 mr-1" />
-                              Agregar Sala
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() => openDialog('edit_building', {
-                                    buildingId: building.id,
-                                    currentName: building.name,
-                                    currentType: building.building_type || undefined
-                                  })}
-                                >
-                                  <Edit2 className="h-4 w-4 mr-2" />
-                                  Editar Edificio
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-red-500"
-                                  onClick={() => handleDelete('building', building.id, building.name)}
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Eliminar Edificio
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {building.rooms.map((room) => (
-                        <div key={room.id} className="border border-border/50 rounded-lg p-4 bg-muted/30">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <Home className="h-4 w-4 text-amber-500" strokeWidth={2} />
-                              <span className="font-medium text-sm">{room.name}</span>
-                              {room.room_type && (
-                                <Badge variant="outline" className="text-xs">
-                                  {room.room_type}
-                                </Badge>
-                              )}
-                              <Badge variant="outline" className="text-xs">
-                                <Cpu className="h-3 w-3 mr-1" />
-                                {room.devices.length} dispositivo{room.devices.length !== 1 ? 's' : ''}
-                              </Badge>
-                            </div>
-                            {isSuperAdmin && (
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openDialog('claim_device', { roomId: room.id })}
-                                >
-                                  <Plus className="h-3 w-3 mr-1" />
-                                  Vincular
-                                </Button>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="sm">
-                                      <MoreVertical className="h-3 w-3" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                      onClick={() => openDialog('edit_room', {
-                                        roomId: room.id,
-                                        currentName: room.name,
-                                        currentType: room.room_type || undefined
-                                      })}
-                                    >
-                                      <Edit2 className="h-4 w-4 mr-2" />
-                                      Editar Sala
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="text-red-500"
-                                      onClick={() => handleDelete('room', room.id, room.name)}
-                                    >
-                                      <Trash2 className="h-4 w-4 mr-2" />
-                                      Eliminar Sala
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            )}
-                          </div>
-
-                          {room.devices.length === 0 ? (
-                            <p className="text-xs text-muted-foreground text-center py-4">
-                              Sin dispositivos instalados
-                            </p>
-                          ) : (
-                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                              {room.devices.map((device) => {
-                                const online = isDeviceOnline(device);
-                                return (
-                                  <div
-                                    key={device.id}
-                                    className={`border rounded-md p-3 ${
-                                      online 
-                                        ? 'border-emerald-500/30 bg-emerald-500/5' 
-                                        : 'border-red-500/30 bg-red-500/5'
-                                    }`}
-                                  >
-                                    <div className="flex items-start justify-between mb-2">
-                                      <div className="flex items-center gap-2">
-                                        {online ? (
-                                          <Wifi className="h-4 w-4 text-emerald-500" strokeWidth={2} />
-                                        ) : (
-                                          <WifiOff className="h-4 w-4 text-red-500" strokeWidth={2} />
-                                        )}
-                                        <span className={`text-xs font-medium ${
-                                          online ? 'text-emerald-500' : 'text-red-500'
-                                        }`}>
-                                          {online ? 'Online' : 'Offline'}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-1">
-                                        <Badge variant="outline" className="text-[10px] font-mono">
-                                          {device.status}
-                                        </Badge>
-                                        
-                                        <DropdownMenu>
-                                          <DropdownMenuTrigger asChild>
-                                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                                              <MoreVertical className="h-4 w-4" />
-                                            </Button>
-                                          </DropdownMenuTrigger>
-                                          <DropdownMenuContent align="end">
-                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'online')}>
-                                              <Activity className="h-4 w-4 mr-2" /> Simular Online
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'offline')}>
-                                              <WifiOff className="h-4 w-4 mr-2" /> Simular Offline
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'alert')}>
-                                              <AlertTriangle className="h-4 w-4 mr-2 text-amber-500" /> Generar Alerta de Prueba
-                                            </DropdownMenuItem>
-                                          </DropdownMenuContent>
-                                        </DropdownMenu>
-                                      </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                      <div className="text-xs">
-                                        <span className="text-muted-foreground">Nombre:</span>
-                                        <span className="ml-2 font-medium">{device.name || 'Sin nombre'}</span>
-                                      </div>
-                                      <div className="text-xs font-mono bg-muted/50 p-1.5 rounded">
-                                        <span className="text-muted-foreground">UID:</span>
-                                        <span className="ml-2 text-primary font-semibold">{device.uid || device.mac_address || device.device_id}</span>
-                                      </div>
-                                      <div className="text-xs">
-                                        <span className="text-muted-foreground">Heartbeat:</span>
-                                        <span className={`ml-2 ${
-                                          online ? 'text-emerald-500' : 'text-red-500'
-                                        }`}>
-                                          {formatHeartbeat(device.last_heartbeat)}
-                                        </span>
-                                      </div>
-                                      {device.firmware_version && (
-                                        <div className="text-xs">
-                                          <span className="text-muted-foreground">FW:</span>
-                                          <span className="ml-2 font-mono">{device.firmware_version}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+        <BuildingRoomTree
+          buildings={buildings}
+          deviceVariant="detailed"
+          canEdit={isSuperAdmin}
+          showSimulateMenu={isSuperAdmin}
+          showHealthBadges
+          isDeviceOnline={isDeviceOnline}
+          onAddRoom={(buildingId) => openDialog("add_room", { buildingId })}
+          onEditBuilding={(b) =>
+            openDialog("edit_building", {
+              buildingId: b.id,
+              currentName: b.name,
+              currentType: b.building_type || undefined,
+            })
+          }
+          onDeleteBuilding={(b) => handleDelete("building", b.id, b.name)}
+          onEditRoom={(_b, r) =>
+            openDialog("edit_room", {
+              roomId: r.id,
+              currentName: r.name,
+              currentType: r.room_type || undefined,
+            })
+          }
+          onDeleteRoom={(_b, r) => handleDelete("room", r.id, r.name)}
+          onClaimDevice={(roomId) => openDialog("claim_device", { roomId })}
+          onSimulateDevice={handleSimulateDevice}
+          formatHeartbeat={formatHeartbeat}
+          emptyState={
+            <Card className="glass-effect">
+              <CardContent className="py-12 text-center">
+                <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" strokeWidth={1.5} />
+                <p className="text-lg font-medium text-muted-foreground">Sin buildings registrados</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Este site aún no tiene estructura configurada.
+                </p>
+              </CardContent>
+            </Card>
+          }
+        />
       </main>
 
       {/* Universal Dialog for CRUD Operations */}

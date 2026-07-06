@@ -324,23 +324,28 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 - Endurecer bucket `alerts` (hoy público con policies anon abiertas) y activar RLS en `organizations`/`profiles`: Fase 0-D o cutover final. Ver memoria `project-security-debt-pending`.
 - Commit sugerido: `db: incremental migrations for v2 (acoustic_events cols + pairing_codes + devices.ingest_token)`.
 
-### Fase 0-B — Reorganizar `lib/supabase.ts` en módulos + añadir validación
-> Refactor sin cambio funcional. Prepara el terreno para extracción futura barata y para que las Route Handlers de fases posteriores tengan una capa limpia sobre la que apoyarse.
+### Fase 0-B — Reorganizar `lib/supabase.ts` en módulos + añadir validación — ✅ COMPLETADA 2026-07-06
+> Refactor sin cambio funcional. Enfoque **facade re-export** para no tocar los 14 archivos que importan de `@/lib/supabase`.
 
-- **Nueva estructura de directorios en `bio-acoustic-frontend/lib/`:**
-  - `lib/supabase/{client.ts,server.ts}` — clientes browser y server-only (con service role).
-  - `lib/db/{organizations,sites,buildings,rooms,devices,acoustic_events,profiles,pairing_codes}.ts` — queries agrupadas por dominio. Cada archivo exporta funciones tipadas.
-  - `lib/services/` — vacío por ahora, se irá poblando en fases siguientes con `ingest.service.ts`, `pairing.service.ts`, etc.
-  - `lib/validation/` — schemas zod para inputs de Route Handlers. Vacío por ahora.
-- **Migración de las 21 funciones actuales** de `lib/supabase.ts`:
-  - Reads (`getAllOrganizations`, `getSitesByOrganization`, `getDevicesByRoom`, etc.) → `lib/db/<dominio>.ts` (sin cambio de firma).
-  - Writes (`createOrganization`, `createSite`, `createBuilding`, `claimDeviceToRoom`, etc.) → también `lib/db/<dominio>.ts`.
-  - Auth helpers (`getCurrentUserProfile`, `isSuperAdmin`, `getUserOrganization`) → `lib/db/profiles.ts` o `lib/auth.ts`.
-- **Añadir zod al proyecto:** `npm i zod`. Placeholder `lib/validation/organization.schema.ts` con un schema simple como ejemplo del patrón.
-- **`lib/supabase.ts` queda vacío o eliminado.** Los imports actuales en el frontend se redireccionan a los nuevos módulos con un search-and-replace ordenado.
-- Sin tocar lógica: sólo mover, no reescribir.
-- Verificar que `npm run build` y las 7 páginas siguen funcionando idénticas.
-- Commit: `frontend: reorganize lib/supabase.ts into per-domain modules + add zod`.
+**Aplicado:**
+- `npm install zod` → `zod ^4.4.3` en package.json.
+- Nueva estructura:
+  - `lib/supabase/client.ts` — anon client (extraído del original).
+  - `lib/supabase/server.ts` — service_role client con `import 'server-only'`. **Nuevo**, sin uso todavía; disponible para Route Handlers de fases 5+.
+  - `lib/db/types.ts` — todas las interfaces + `UserRole`.
+  - `lib/db/{profiles,organizations,sites,buildings,rooms,devices,invitations}.ts` — 20 funciones movidas sin cambio de firma.
+  - `lib/services/.gitkeep`, `lib/validation/.gitkeep` — placeholders para fases futuras.
+- `lib/supabase.ts` reescrito como **facade** de 62 líneas: re-exporta todos los símbolos originales desde los nuevos módulos. Los 14 imports actuales del frontend siguen funcionando sin tocarse.
+- **NO se crearon** módulos para `acoustic_events` ni `pairing_codes` — todavía no hay funciones de esos dominios en `lib/`; se crearán cuando existan (Fase 5).
+
+**Verificado:**
+- `npm run build`: OK, mismas 11 rutas compilan.
+- `npx tsc --noEmit`: los únicos errores TS son los preexistentes en `components/admin/farms-management.tsx` (importa `Farm/createFarm` inexistentes — huérfano no usado). Ninguna regresión nueva. Se tratará en Fase 0-C al quitar `ignoreBuildErrors`.
+
+**Deuda apuntada (fuera de 0-B, para 0-C o después):**
+- `farms-management.tsx` (huérfano roto) — borrar o repararlo.
+- Migración progresiva de imports: los 14 archivos que usan `@/lib/supabase` pueden migrarse a los paths específicos (`@/lib/db/*`, `@/lib/supabase/client`) uno a uno en fases futuras.
+- Commit: `frontend: reorganize lib/supabase.ts into per-domain modules + facade + zod`.
 
 ### Fase 0-C — Endurecimiento de seguridad y deuda técnica
 - **Nuevo `bio-acoustic-frontend/middleware.ts`** — protege `/dashboard/*` y `/admin/*` con validación server-side del JWT Supabase (usando `createServerClient` de `@supabase/ssr` o el equivalente vigente). Redirige a `/login` si no hay sesión. Cierra el hueco de auth solo client-side.

@@ -53,9 +53,9 @@ import {
   Trash2,
   Settings,
   Save,
-  CheckCircle2,
   AlertCircle
 } from "lucide-react";
+import { toast } from "sonner";
 
 
 interface RoomWithDevices extends Room {
@@ -96,7 +96,6 @@ export default function FarmSettingsPage() {
     deviceUid: ""
   });
   const [submitting, setSubmitting] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const fetchData = async () => {
     try {
@@ -192,11 +191,6 @@ export default function FarmSettingsPage() {
     fetchData();
   }, []);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), 3000);
-  };
-
   const openDialog = (mode: DialogMode, data?: Partial<DialogState>) => {
     setDialogState({ mode, ...data });
     setFormData({
@@ -226,10 +220,10 @@ export default function FarmSettingsPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newBuilding) {
-            showNotification('success', '✅ Edificio creado correctamente');
+            toast.success('Edificio creado correctamente');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al crear edificio');
+            toast.error('Error al crear edificio');
           }
           break;
 
@@ -242,10 +236,10 @@ export default function FarmSettingsPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newRoom) {
-            showNotification('success', '✅ Sala creada correctamente');
+            toast.success('Sala creada correctamente');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al crear sala');
+            toast.error('Error al crear sala');
           }
           break;
 
@@ -256,10 +250,10 @@ export default function FarmSettingsPage() {
             building_type: formData.type || undefined
           });
           if (buildingUpdated) {
-            showNotification('success', '✅ Edificio actualizado');
+            toast.success('Edificio actualizado');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al actualizar edificio');
+            toast.error('Error al actualizar edificio');
           }
           break;
 
@@ -270,10 +264,10 @@ export default function FarmSettingsPage() {
             room_type: formData.type || undefined
           });
           if (roomUpdated) {
-            showNotification('success', '✅ Sala actualizada');
+            toast.success('Sala actualizada');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al actualizar sala');
+            toast.error('Error al actualizar sala');
           }
           break;
 
@@ -281,17 +275,17 @@ export default function FarmSettingsPage() {
           if (!dialogState.roomId || !formData.deviceUid) return;
           const claimed = await claimDeviceToRoom(formData.deviceUid, dialogState.roomId);
           if (claimed) {
-            showNotification('success', '✅ Dispositivo vinculado correctamente');
+            toast.success('Dispositivo vinculado correctamente');
             await fetchData();
           } else {
-            showNotification('error', '❌ Dispositivo no encontrado o error al vincular');
+            toast.error('Dispositivo no encontrado o error al vincular');
           }
           break;
       }
       closeDialog();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
-      showNotification('error', '❌ Error en la operación');
+      toast.error('Error en la operación');
     } finally {
       setSubmitting(false);
     }
@@ -308,14 +302,14 @@ export default function FarmSettingsPage() {
         : await deleteRoom(id);
 
       if (success) {
-        showNotification('success', `✅ ${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
+        toast.success(`${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
         await fetchData();
       } else {
-        showNotification('error', '❌ Error al eliminar');
+        toast.error('Error al eliminar');
       }
     } catch (error) {
       console.error('Error deleting:', error);
-      showNotification('error', '❌ Error al eliminar');
+      toast.error('Error al eliminar');
     }
   };
 
@@ -371,26 +365,6 @@ export default function FarmSettingsPage() {
           </div>
         </div>
       </header>
-
-      {/* Notification */}
-      {notification && (
-        <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-top">
-          <Card className={`${
-            notification.type === 'success' 
-              ? 'border-emerald-500/50 bg-emerald-500/10' 
-              : 'border-red-500/50 bg-red-500/10'
-          }`}>
-            <CardContent className="p-4 flex items-center gap-2">
-              {notification.type === 'success' ? (
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              ) : (
-                <AlertCircle className="h-5 w-5 text-red-500" />
-              )}
-              <span className="text-sm font-medium">{notification.message}</span>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-6">
@@ -584,11 +558,11 @@ export default function FarmSettingsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {dialogState.mode === 'add_building' && '➕ Agregar Nuevo Edificio/Nave'}
-              {dialogState.mode === 'add_room' && '➕ Agregar Nueva Sala'}
-              {dialogState.mode === 'edit_building' && '✏️ Editar Edificio'}
-              {dialogState.mode === 'edit_room' && '✏️ Editar Sala'}
-              {dialogState.mode === 'claim_device' && '🔗 Vincular Dispositivo IoT'}
+              {dialogState.mode === 'add_building' && 'Agregar Nuevo Edificio/Nave'}
+              {dialogState.mode === 'add_room' && 'Agregar Nueva Sala'}
+              {dialogState.mode === 'edit_building' && 'Editar Edificio'}
+              {dialogState.mode === 'edit_room' && 'Editar Sala'}
+              {dialogState.mode === 'claim_device' && 'Vincular Dispositivo IoT'}
             </DialogTitle>
             <DialogDescription asChild>
               <div>

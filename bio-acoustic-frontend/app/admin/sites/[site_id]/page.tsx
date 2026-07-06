@@ -14,7 +14,6 @@ import {
   updateRoom,
   deleteBuilding,
   deleteRoom,
-  claimDeviceToRoom,
   supabase,
   Event,
   Building,
@@ -69,6 +68,7 @@ import {
 } from "lucide-react";
 import { EventsTable } from "@/components/dashboard/events-table";
 import { AlertsChart } from "@/components/dashboard/alerts-chart";
+import { toast } from "sonner";
 
 export const dynamic = 'force-dynamic';
 
@@ -114,7 +114,6 @@ export default function SiteInspectionPage() {
     deviceUid: ""
   });
   const [submitting, setSubmitting] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const fetchSiteData = async () => {
     try {
@@ -245,11 +244,6 @@ export default function SiteInspectionPage() {
     };
   }, [siteId]);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), 3000);
-  };
-
   const openDialog = async (mode: DialogMode, data?: Partial<DialogState>) => {
     setDialogState({ mode, ...data });
     setFormData({
@@ -288,10 +282,10 @@ export default function SiteInspectionPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newBuilding) {
-            showNotification('success', '✅ Edificio creado correctamente');
+            toast.success('Edificio creado correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al crear edificio');
+            toast.error('Error al crear edificio');
           }
           break;
 
@@ -304,10 +298,10 @@ export default function SiteInspectionPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newRoom) {
-            showNotification('success', '✅ Sala creada correctamente');
+            toast.success('Sala creada correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al crear sala');
+            toast.error('Error al crear sala');
           }
           break;
 
@@ -318,10 +312,10 @@ export default function SiteInspectionPage() {
             building_type: formData.type || undefined
           });
           if (buildingUpdated) {
-            showNotification('success', '✅ Edificio actualizado');
+            toast.success('Edificio actualizado');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al actualizar edificio');
+            toast.error('Error al actualizar edificio');
           }
           break;
 
@@ -332,10 +326,10 @@ export default function SiteInspectionPage() {
             room_type: formData.type || undefined
           });
           if (roomUpdated) {
-            showNotification('success', '✅ Sala actualizada');
+            toast.success('Sala actualizada');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al actualizar sala');
+            toast.error('Error al actualizar sala');
           }
           break;
 
@@ -347,17 +341,17 @@ export default function SiteInspectionPage() {
             .eq('id', formData.deviceUid);
             
           if (!claimError) {
-            showNotification('success', '✅ Dispositivo vinculado correctamente');
+            toast.success('Dispositivo vinculado correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al vincular dispositivo');
+            toast.error('Error al vincular dispositivo');
           }
           break;
       }
       closeDialog();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
-      showNotification('error', '❌ Error en la operación');
+      toast.error('Error en la operación');
     } finally {
       setSubmitting(false);
     }
@@ -376,7 +370,7 @@ export default function SiteInspectionPage() {
           .eq('id', device.id);
         
         if (error) throw error;
-        showNotification('success', `✅ Dispositivo simulado como ${action}`);
+        toast.success(`Dispositivo simulado como ${action}`);
       } else if (action === 'alert') {
         const { error } = await supabase
           .from('acoustic_events')
@@ -389,13 +383,13 @@ export default function SiteInspectionPage() {
           });
           
         if (error) throw error;
-        showNotification('success', '✅ Alerta de prueba generada (RMS: 90.0)');
+        toast.success('Alerta de prueba generada (RMS: 90.0)');
       }
       
       await fetchSiteData();
     } catch (error) {
       console.error('Error simulating device:', error);
-      showNotification('error', '❌ Error al ejecutar simulación');
+      toast.error('Error al ejecutar simulación');
     }
   };
 
@@ -410,14 +404,14 @@ export default function SiteInspectionPage() {
         : await deleteRoom(id);
 
       if (success) {
-        showNotification('success', `✅ ${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
+        toast.success(`${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
         await fetchSiteData();
       } else {
-        showNotification('error', '❌ Error al eliminar');
+        toast.error('Error al eliminar');
       }
     } catch (error) {
       console.error('Error deleting:', error);
-      showNotification('error', '❌ Error al eliminar');
+      toast.error('Error al eliminar');
     }
   };
 
@@ -556,26 +550,6 @@ export default function SiteInspectionPage() {
           </div>
         </div>
       </header>
-
-      {/* Notification */}
-      {notification && (
-        <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-top">
-          <Card className={`${
-            notification.type === 'success' 
-              ? 'border-emerald-500/50 bg-emerald-500/10' 
-              : 'border-red-500/50 bg-red-500/10'
-          }`}>
-            <CardContent className="p-4 flex items-center gap-2">
-              {notification.type === 'success' ? (
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              ) : (
-                <AlertTriangle className="h-5 w-5 text-red-500" />
-              )}
-              <span className="text-sm font-medium">{notification.message}</span>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-8">
@@ -895,11 +869,11 @@ export default function SiteInspectionPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {dialogState.mode === 'add_building' && '➕ Agregar Nuevo Edificio/Nave'}
-              {dialogState.mode === 'add_room' && '➕ Agregar Nueva Sala'}
-              {dialogState.mode === 'edit_building' && '✏️ Editar Edificio'}
-              {dialogState.mode === 'edit_room' && '✏️ Editar Sala'}
-              {dialogState.mode === 'claim_device' && '🔗 Vincular Dispositivo IoT'}
+              {dialogState.mode === 'add_building' && 'Agregar Nuevo Edificio/Nave'}
+              {dialogState.mode === 'add_room' && 'Agregar Nueva Sala'}
+              {dialogState.mode === 'edit_building' && 'Editar Edificio'}
+              {dialogState.mode === 'edit_room' && 'Editar Sala'}
+              {dialogState.mode === 'claim_device' && 'Vincular Dispositivo IoT'}
             </DialogTitle>
             <DialogDescription asChild>
               <div>

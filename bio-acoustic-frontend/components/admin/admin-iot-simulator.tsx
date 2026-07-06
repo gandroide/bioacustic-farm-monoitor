@@ -20,7 +20,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter
 } from "@/components/ui/dialog";
 
@@ -85,7 +84,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
       
       if (devices.length === 0) {
         setStatus('error');
-        setMessage('⚠️ No hay dispositivos en este site');
+        setMessage('No hay dispositivos en este site');
         setTimeout(() => setStatus('idle'), 3000);
         return;
       }
@@ -105,7 +104,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
       if (error) throw error;
 
       setStatus('success');
-      setMessage(`✅ ${devices.length} dispositivos activados correctamente`);
+      setMessage(`${devices.length} dispositivos activados correctamente`);
       
       setTimeout(() => {
         setStatus('idle');
@@ -114,7 +113,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
     } catch (error) {
       console.error('Error in forceOnline:', error);
       setStatus('error');
-      setMessage('❌ Error al activar dispositivos');
+      setMessage('Error al activar dispositivos');
       setTimeout(() => setStatus('idle'), 3000);
     }
   };
@@ -129,7 +128,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
       
       if (devices.length === 0) {
         setStatus('error');
-        setMessage('⚠️ No hay dispositivos en este site');
+        setMessage('No hay dispositivos en este site');
         setTimeout(() => setStatus('idle'), 3000);
         return;
       }
@@ -154,7 +153,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
       if (error) throw error;
 
       setStatus('success');
-      setMessage(`⚠️ ${failCount} dispositivo${failCount > 1 ? 's' : ''} en falla crítica`);
+      setMessage(`${failCount} dispositivo${failCount > 1 ? 's' : ''} en falla crítica`);
       
       setTimeout(() => {
         setStatus('idle');
@@ -163,7 +162,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
     } catch (error) {
       console.error('Error in simulateCriticalFailure:', error);
       setStatus('error');
-      setMessage('❌ Error al simular falla');
+      setMessage('Error al simular falla');
       setTimeout(() => setStatus('idle'), 3000);
     }
   };
@@ -178,7 +177,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
       
       if (devices.length === 0) {
         setStatus('error');
-        setMessage('⚠️ No hay dispositivos en este site');
+        setMessage('No hay dispositivos en este site');
         setTimeout(() => setStatus('idle'), 3000);
         return;
       }
@@ -198,7 +197,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
       if (error) throw error;
 
       setStatus('success');
-      setMessage(`💀 ${devices.length} dispositivos offline (Site muerto)`);
+      setMessage(`${devices.length} dispositivos offline (Site muerto)`);
       
       setTimeout(() => {
         setStatus('idle');
@@ -207,7 +206,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
     } catch (error) {
       console.error('Error in killSite:', error);
       setStatus('error');
-      setMessage('❌ Error al apagar site');
+      setMessage('Error al apagar site');
       setTimeout(() => setStatus('idle'), 3000);
     }
   };
@@ -328,7 +327,7 @@ export function AdminIoTSimulator({ siteId, onSimulationComplete }: AdminIoTSimu
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5" strokeWidth={2} />
               <div className="text-xs text-muted-foreground">
-                <p className="font-semibold text-foreground mb-1">⚠️ Modo de Pruebas</p>
+                <p className="font-semibold text-foreground mb-1">Modo de Pruebas</p>
                 <p>
                   Estas acciones modifican directamente el estado de los dispositivos en la base de datos.
                   Úsalas solo para testing y debugging. Los cambios son inmediatos y afectan a la vista del cliente.

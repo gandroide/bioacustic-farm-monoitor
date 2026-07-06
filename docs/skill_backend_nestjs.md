@@ -1,5 +1,11 @@
 # Skill: NestJS Backend Controller
 
+> ⚠️ **ARCHIVADO 2026-07-06**
+>
+> NestJS **no se implementa** en Fase 1 del rebuild v2. El endpoint IoT (`/api/ingest`) vive como Next.js Route Handler en `bio-acoustic-frontend/app/api/*` — ver `docs/plan_sd_buffer_label_button.md` §G para el estado actual del stack y §G.4 para los criterios que justificarían extraer un backend NestJS en el futuro.
+>
+> Este documento se conserva como referencia histórica. Su schema sugerido (`farms/events`) tampoco refleja el schema real (`sites → buildings → rooms → devices` + `acoustic_events`). NO seguir como guía de implementación.
+
 ## Contexto
 API central que recibe datos de múltiples sensores y gestiona la lógica de negocio antes de persistir en DB.
 

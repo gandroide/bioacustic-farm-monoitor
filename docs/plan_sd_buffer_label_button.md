@@ -347,13 +347,29 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 - Migración progresiva de imports: los 14 archivos que usan `@/lib/supabase` pueden migrarse a los paths específicos (`@/lib/db/*`, `@/lib/supabase/client`) uno a uno en fases futuras.
 - Commit: `frontend: reorganize lib/supabase.ts into per-domain modules + facade + zod`.
 
-### Fase 0-C — Endurecimiento de seguridad y deuda técnica
-- **Nuevo `bio-acoustic-frontend/middleware.ts`** — protege `/dashboard/*` y `/admin/*` con validación server-side del JWT Supabase (usando `createServerClient` de `@supabase/ssr` o el equivalente vigente). Redirige a `/login` si no hay sesión. Cierra el hueco de auth solo client-side.
-- **`next.config.ts`:** intentar quitar `ignoreBuildErrors: true`. Fixear los TS errors reales que aparezcan. Si alguno requiere refactor grande, dejarlo con comentario explicando y un TODO.
-- **`app/api/v1/telemetry/route.ts`:** eliminar (es un proxy fantasma a `localhost:3000` que no se va a usar). El endpoint IoT real es `/api/ingest`, se implementa en Fase 5.
-- **`docs/skill_backend_nestjs.md`:** añadir nota al principio "ARCHIVADO 2026-07-05: NestJS no se implementa en Fase 1. Ver `docs/plan_sd_buffer_label_button.md` §G para el estado actual".
-- Verificación: en incógnito, navegar a `/dashboard` sin login → redirect a `/login`. Login → dashboard funciona. Navegar a `/admin` sin ser super_admin → 403 o redirect.
-- Commit: `frontend: add auth middleware + tighten TS build + clean tech debt`.
+### Fase 0-C — Endurecimiento de seguridad y deuda técnica — ✅ COMPLETADA 2026-07-06
+
+**Aplicado:**
+- **Middleware ya existía** como `bio-acoustic-frontend/proxy.ts` (Next.js 16 lo reconoce como middleware — se ve en el build como `ƒ Proxy (Middleware)`). Hace auth SSR + RBAC (redirige super_admin↔regular según ruta). Usa `@supabase/auth-helpers-nextjs@0.15.0` (deprecated pero funcional; migración a `@supabase/ssr` queda como deuda separada). NO se creó `middleware.ts` — cumple el intent del plan.
+- **`next.config.ts`:** eliminado `ignoreBuildErrors: true`. Convertido a `NextConfig` tipado nativo. Build ahora corre TypeScript strict (visible como "Running TypeScript" en la salida).
+- **Borrado `app/api/v1/telemetry/route.ts`** + carpeta `api/v1/` vacía.
+- **Borrado `components/admin/farms-management.tsx`** (huérfano roto que importaba `Farm/createFarm` inexistentes — bloqueaba TS strict).
+- **`docs/skill_backend_nestjs.md`:** nota de archivado añadida al principio del documento.
+
+**Verificado:**
+- `npm run build` (sin `ignoreBuildErrors`): OK, 10 rutas (perdimos `/api/v1/telemetry` intencionalmente).
+- `npx tsc --noEmit`: exit 0, cero errores.
+- Middleware `ƒ Proxy (Middleware)` sigue activo en la salida del build.
+
+**Deuda apuntada para el cutover o Fase 0-D:**
+- `@supabase/auth-helpers-nextjs@0.15.0` está deprecated — migrar a `@supabase/ssr` cuando toque endurecer auth. No urgente.
+- Matcher del middleware (`proxy.ts`) redirige rutas API sin auth a `/login` en vez de retornar 401. Fuera de scope pero anotado.
+
+**Verificación manual pendiente** (requiere navegador real, la hace el usuario):
+- Incógnito → `/dashboard` sin login → debe redirigir a `/login?redirect=/dashboard`.
+- Login como super_admin → `/dashboard` debe redirigir a `/admin`.
+- Login como org_admin → `/admin` debe redirigir a `/dashboard`.
+- Commit: `frontend: Fase 0-C — auth middleware confirmed + tighten TS build + clean tech debt`.
 
 **Duración estimada Fase 0 completa (revisada 2026-07-05):** **~1 día con asistencia de IA.**
 

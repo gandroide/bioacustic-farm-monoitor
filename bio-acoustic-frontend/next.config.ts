@@ -1,9 +1,5 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  typescript: {
-    // Ignoramos errores de tipado para poder desplegar en producción rápido.
-    ignoreBuildErrors: true,
-  },
-};
+import type { NextConfig } from 'next'
 
-export default nextConfig;
+const nextConfig: NextConfig = {}
+
+export default nextConfig

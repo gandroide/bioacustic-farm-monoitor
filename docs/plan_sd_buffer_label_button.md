@@ -82,7 +82,7 @@ Antes de este plan, se pensaba que `bio-acoustic-frontend` era esqueleto con sol
 - **7 páginas reales:** `/login`, `/dashboard`, `/admin`, `/admin/inventory`, `/admin/sites/[site_id]`, `/dashboard/settings/farm`, `/`.
 - **Auth completa** con Supabase Auth (client-side; falta SSR guard, ver Fase 0-D).
 - **Multi-tenant RBAC** — jerarquía `organizations → sites → buildings → rooms → devices`.
-- **Realtime activo** — 2 suscripciones a `postgres_changes` sobre la tabla `events` (en `dashboard/page.tsx:132` y `admin/sites/[site_id]/page.tsx:229`).
+- **Realtime activo** — 2 suscripciones a `postgres_changes` sobre la tabla `acoustic_events` (en `dashboard/page.tsx:132` y `admin/sites/[site_id]/page.tsx:229`).
 - **CRUD funcional** en `lib/supabase.ts` (~21 funciones exportadas) para orgs, sites, buildings, rooms, devices, profiles.
 - **`/api/admin/invite-user`** funciona (invita farm admins con service role).
 - **Vercel deploy** ya operativo desde `main`.
@@ -93,7 +93,7 @@ Antes de este plan, se pensaba que `bio-acoustic-frontend` era esqueleto con sol
 - **Backend NestJS:** 0 líneas — Fase 0-A.
 - **Tabla `pairing_codes`:** no existe — Fase 0-B.
 - **Columnas en `devices`:** faltan `ingest_token`, `last_seen` — Fase 0-B.
-- **Columnas en `events`:** faltan `event_type`, `baseline_rms`, `peak_rms`, `dominant_freq_hz`, `temp_c`, `uptime_ms`, `audio_url`, `operator_label`, `metadata` — Fase 0-B.
+- **Columnas en `acoustic_events`:** ya existen `event_type`, `audio_url`, `room_id`, `rms_level`, `battery_percentage`. Faltan `site_id`, `baseline_rms`, `peak_rms`, `dominant_freq_hz`, `temp_c`, `uptime_ms`, `operator_label`, `metadata` — Fase 0-A.
 - **`middleware.ts`:** no existe — Fase 0-D (auth server-side).
 - **Firmware `bio-acoustic-bread`:** 42 líneas skeleton — fuera del alcance de este plan.
 
@@ -120,7 +120,7 @@ Este plan aborda tres cambios interrelacionados:
 
 ## Decisiones ya confirmadas por el usuario
 
-- **Tabla de eventos:** ya existe (`events`, con 2 suscripciones Realtime activas). **Se extiende con columnas nuevas** en vez de crear una tabla nueva (auditoría 2026-07-05).
+- **Tabla de eventos:** ya existe (`acoustic_events`, con 2 suscripciones Realtime activas). **Se extiende con columnas nuevas** en vez de crear una tabla nueva (auditoría 2026-07-05).
 - **Autenticación de subida:** endpoint `POST /api/ingest` **como Next.js Route Handler** (server-only) con `X-Device-Token` por dispositivo. La `SUPABASE_SERVICE_ROLE_KEY` vive en `.env.local` (server-only, sin prefijo `NEXT_PUBLIC_`).
 - **Ventana hacia atrás para etiquetar:** 30 s (constante `LABEL_BACKWARD_WINDOW_MS = 30000`).
 - **Modularizar `main.cpp`:** sólo si supera 1800 líneas tras las nuevas funcionalidades. Por defecto, monolítico.
@@ -183,42 +183,46 @@ Regla estricta, en este orden:
 - Nuevo endpoint `POST /api/ingest` en `bio-acoustic-frontend/app/api/ingest/route.ts`:
   - Valida `X-Device-Token` contra la tabla `devices` (columna nueva `ingest_token`).
   - Acepta `multipart/form-data` con `audio` (WAV) + `meta` (JSON).
-  - Sube el WAV al bucket `alerts/<mac>/<filename>.wav` con service key (server-side).
+  - Sube el WAV al bucket `alerts/<site_id>/<mac>/<yyyy-mm>/<filename>.wav` con service key (server-side). `site_id` como primer segmento para que el dataset ML del owner se pueda curar por granja sin JOIN a Postgres.
   - Inserta la fila en `acoustic_events`.
   - Responde `{ok: true, event_id: uuid}` o error 4xx/5xx.
 - El firmware sólo conoce: URL del proxy + su token. Nunca ve claves de Supabase.
 
-### Schema de la tabla `events` (extender, NO crear nueva)
+### Schema de la tabla `acoustic_events` (extender, NO crear nueva)
 
-**Importante (corregido 2026-07-05):** la tabla `events` ya existe con Realtime activo. Se extiende en vez de renombrar para evitar romper las 2 suscripciones y las 7 páginas del frontend.
+**Importante (aplicado 2026-07-06):** la tabla `acoustic_events` ya existe con Realtime activo. Se extendió en vez de renombrar para evitar romper las 2 suscripciones y las páginas del frontend. Ya tenía: `id (integer SERIAL), "time", device_id, room_id, event_type, rms_level, battery_percentage, audio_url, metadata (jsonb), created_at, confidence`.
 
-Columnas a añadir (todas nullables para no romper filas existentes):
+⚠️ **Nota de tipo:** `acoustic_events.id` es **INTEGER SERIAL**, no UUID. El `event_id` que devolverá `/api/ingest` en Fase 5 será entero (BIGINT en JSON).
+
+Columnas añadidas (todas nullables + `IF NOT EXISTS`):
 
 ```sql
-ALTER TABLE events ADD COLUMN event_type TEXT;         -- 'REC' | 'ENV'
-ALTER TABLE events ADD COLUMN baseline_rms FLOAT;
-ALTER TABLE events ADD COLUMN peak_rms FLOAT;
-ALTER TABLE events ADD COLUMN dominant_freq_hz FLOAT;
-ALTER TABLE events ADD COLUMN temp_c FLOAT;
-ALTER TABLE events ADD COLUMN uptime_ms BIGINT;
-ALTER TABLE events ADD COLUMN audio_url TEXT;          -- storage path en bucket `alerts`
-ALTER TABLE events ADD COLUMN operator_label TEXT;     -- NULL | 'crushing'
-ALTER TABLE events ADD COLUMN metadata JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id);       -- tenant para RLS + path bucket + curación ML
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS baseline_rms FLOAT;
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS peak_rms FLOAT;                          -- pico durante la alerta (rms_level = valor legacy)
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS dominant_freq_hz FLOAT;
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS temp_c FLOAT;
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS uptime_ms BIGINT;
+ALTER TABLE acoustic_events ADD COLUMN IF NOT EXISTS operator_label TEXT;                     -- NULL | 'crushing'
+
+CREATE INDEX IF NOT EXISTS idx_acoustic_events_site_id ON acoustic_events(site_id);
+CREATE INDEX IF NOT EXISTS idx_acoustic_events_operator_label ON acoustic_events(operator_label) WHERE operator_label IS NOT NULL;
 ```
 
-Sobre `devices`:
+Nota: `event_type`, `audio_url`, `metadata` ya existen — no se re-crean.
+
+Sobre `devices` (ya tiene `last_heartbeat TIMESTAMPTZ` — reusamos, no añadimos `last_seen`):
 
 ```sql
-ALTER TABLE devices ADD COLUMN ingest_token TEXT UNIQUE;
-ALTER TABLE devices ADD COLUMN last_seen TIMESTAMPTZ;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS ingest_token TEXT UNIQUE;
 ```
 
 Nueva tabla `pairing_codes`:
 
 ```sql
-CREATE TABLE pairing_codes (
+CREATE TABLE IF NOT EXISTS pairing_codes (
   code TEXT PRIMARY KEY,             -- 6 dígitos
-  farm_id UUID REFERENCES organizations(id) NOT NULL,
+  site_id UUID REFERENCES sites(id) NOT NULL,
   room_id UUID REFERENCES rooms(id) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   used_at TIMESTAMPTZ,
@@ -227,9 +231,10 @@ CREATE TABLE pairing_codes (
 -- RLS: SELECT/INSERT sólo con service role.
 ```
 
-RLS a verificar/endurecer en la migración:
-- `events`: SELECT restringido por `farm_id` (probablemente ya lo esté, verificar).
-- Bucket `alerts`: INSERT sólo con service role, SELECT restringido por `farm_id` matching path.
+RLS (estado verificado 2026-07-06 — NO se toca en Fase 0-A):
+- `acoustic_events`: RLS ya enabled, con 2 policies SELECT que cubren tenant vía `room_id → building → site → organization`. Añadir una policy por `site_id` sería redundante.
+- Bucket `alerts`: hoy **público** con policies abiertas a `anon` (`acceso_total 1bmm1ef_*`). Endurecer rompe `main`. Se pospone a Fase 0-D o al cutover.
+- `organizations` y `profiles`: **RLS OFF** en producción. Deuda de seguridad conocida, ver memoria `project-security-debt-pending`.
 
 ---
 
@@ -298,27 +303,33 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 
 > **Nota general de Fase 0 (aclarada 2026-07-05):** **NADA de este plan merge a `main` hasta que TODO esté validado en campo.** Todas las subfases (0-A a 0-F, y luego 1 a 8) viven en la rama, sin excepción. `main` conserva el estado actual (Supabase + Next.js + firmware v1) intacto hasta el corte final. Ver §H.
 
-### Fase 0-A — Migraciones incrementales en Supabase (proyecto único)
-> Se trabaja contra el **proyecto Supabase actual**. Las migraciones son aditivas y no rompen la app en `main`.
+### Fase 0-A — Migraciones incrementales en Supabase (proyecto único) — ✅ COMPLETADA 2026-07-06
+> Se trabajó contra el **proyecto Supabase productivo `uaecpeaefqwjpxgjbfye`**. Las migraciones son aditivas y no rompen la app en `main`.
 
-- Setup `supabase-cli` en el repo: `supabase init` en la raíz o dentro de `bio-acoustic-frontend/`.
-- Link al proyecto: `supabase link --project-ref <ref>`.
-- Crear migraciones versionadas en `db/migrations/*.sql`. **Todas ADITIVAS** (columnas nullables, tablas nuevas — no rompen el frontend actual de `main`):
-  - `<ts>_add_ingest_token_to_devices.sql` → `ALTER TABLE devices ADD COLUMN ingest_token TEXT UNIQUE; ALTER TABLE devices ADD COLUMN last_seen TIMESTAMPTZ`.
-  - `<ts>_extend_events_with_audio_columns.sql` → las 9 columnas nullables (event_type, baseline_rms, peak_rms, dominant_freq_hz, temp_c, uptime_ms, audio_url, operator_label, metadata).
-  - `<ts>_create_pairing_codes.sql` → tabla nueva.
-  - `<ts>_harden_rls_events_and_alerts_bucket.sql` → verificar y endurecer RLS de `events` (SELECT por `farm_id`) y del bucket `alerts` (INSERT solo con service role, SELECT restringido por `farm_id` matching path). **Cuidado con esta migración**: si `main` accede a `events` con anon key sin claim de `farm_id`, endurecer RLS puede bloquearle. Revisar antes de aplicar.
-- `supabase db push` aplica al proyecto.
-- Seed script mínimo en `db/seed.sql`: 1 super admin, 1 org test, 1 site/building/room, 1 device paireable.
-- Actualizar `docs/supabase_schema.sql` con snapshot post-migración.
-- Commit: `db: incremental migrations for v2 (events cols + pairing_codes + devices.ingest_token)`.
+**Aplicado:**
+- `supabase init` en `bio-acoustic-frontend/` → `supabase/config.toml` + `.gitignore`.
+- `supabase link --project-ref uaecpeaefqwjpxgjbfye` (autenticación vía `SUPABASE_ACCESS_TOKEN`, DB password vía `SUPABASE_DB_PASSWORD`).
+- Auditoría del schema real con `pg_dump` (Docker no disponible → sorteado con `brew install libpq`). Baseline guardado en `bio-acoustic-frontend/supabase/audit-baseline.sql` (git-ignored).
+- **3 migraciones aditivas** en `bio-acoustic-frontend/supabase/migrations/`:
+  - `20260705153000_add_ingest_token_to_devices.sql` → `devices.ingest_token TEXT UNIQUE` (nullable). NO se añade `last_seen` — ya existe `last_heartbeat`.
+  - `20260705153100_extend_acoustic_events_with_audio_columns.sql` → 7 columnas (`site_id, baseline_rms, peak_rms, dominant_freq_hz, temp_c, uptime_ms, operator_label`) + 2 índices. NO se añade `metadata` — ya existe.
+  - `20260705153200_create_pairing_codes.sql` → tabla nueva con RLS enabled sin policies (solo service_role tiene acceso).
+- **Eliminada la 4ª migración planeada** (`harden_rls_acoustic_events_and_alerts_bucket`): las policies existentes de `acoustic_events` ya cubren tenant; endurecer bucket/RLS rompería `main` y se pospone.
+- `supabase db push` aplicó las 3 migraciones sin conflictos.
+- Smoke test: `psql` verificó columnas nuevas + filas intactas (6 events, 7 devices, 3 sites); `npm run build` compila las 11 rutas.
+- `docs/supabase_schema.sql` actualizado con snapshot post-migración.
+
+**Pendiente para fases futuras (fuera de 0-A):**
+- Seed script `db/seed.sql`: postergado — hay datos de prueba suficientes en producción.
+- Endurecer bucket `alerts` (hoy público con policies anon abiertas) y activar RLS en `organizations`/`profiles`: Fase 0-D o cutover final. Ver memoria `project-security-debt-pending`.
+- Commit sugerido: `db: incremental migrations for v2 (acoustic_events cols + pairing_codes + devices.ingest_token)`.
 
 ### Fase 0-B — Reorganizar `lib/supabase.ts` en módulos + añadir validación
 > Refactor sin cambio funcional. Prepara el terreno para extracción futura barata y para que las Route Handlers de fases posteriores tengan una capa limpia sobre la que apoyarse.
 
 - **Nueva estructura de directorios en `bio-acoustic-frontend/lib/`:**
   - `lib/supabase/{client.ts,server.ts}` — clientes browser y server-only (con service role).
-  - `lib/db/{organizations,sites,buildings,rooms,devices,events,profiles,pairing_codes}.ts` — queries agrupadas por dominio. Cada archivo exporta funciones tipadas.
+  - `lib/db/{organizations,sites,buildings,rooms,devices,acoustic_events,profiles,pairing_codes}.ts` — queries agrupadas por dominio. Cada archivo exporta funciones tipadas.
   - `lib/services/` — vacío por ahora, se irá poblando en fases siguientes con `ingest.service.ts`, `pairing.service.ts`, etc.
   - `lib/validation/` — schemas zod para inputs de Route Handlers. Vacío por ahora.
 - **Migración de las 21 funciones actuales** de `lib/supabase.ts`:
@@ -392,7 +403,7 @@ Reemplaza el hardcoding de credenciales por un flujo de comisionado que el granj
 - Reset de credenciales: **pulsación larga simultánea de BTN_SYNC + BTN_LABEL durante 5 s** → borra NVS y reinicia en pairing. Nuevo caso a integrar en `buttonTask`.
 
 **Componentes API (Next.js Route Handlers):**
-- `POST /api/pairing-code` (`app/api/pairing-code/route.ts`) — requiere JWT del usuario (Farm Admin), validado por middleware o server-side supabase-js. Genera código de 6 dígitos, guarda en `pairing_codes` con TTL 10 min, `farm_id` y `room_id`. Lógica en `lib/services/pairing.service.ts`.
+- `POST /api/pairing-code` (`app/api/pairing-code/route.ts`) — requiere JWT del usuario (Farm Admin), validado por middleware o server-side supabase-js. Genera código de 6 dígitos, guarda en `pairing_codes` con TTL 10 min, `site_id` y `room_id`. Lógica en `lib/services/pairing.service.ts`.
 - `POST /api/claim` (`app/api/claim/route.ts`) — público (sin JWT, se apoya en el código). Recibe `{mac, code}`, valida vigencia, UPSERT en `devices` (usa `SUPABASE_SERVICE_ROLE_KEY` server-only), genera `ingest_token` con `crypto.randomBytes(24).toString('hex')`, marca el código como `used_at = now()`, responde `{ok, ingest_token, ingest_url}`.
 - **Frontend:** vista "Aparear nuevo nodo" en `bio-acoustic-frontend/app/admin/devices/pair/page.tsx` que llama a `/api/pairing-code` y muestra el código + QR opcional.
 
@@ -418,8 +429,8 @@ Reemplaza el hardcoding de credenciales por un flujo de comisionado que el granj
   3. Validar `meta` con zod (`lib/validation/ingest.schema.ts`).
   4. Delegar en `lib/services/ingest.service.ts` toda la lógica.
 - **`lib/services/ingest.service.ts`:**
-  - Upload del WAV a Supabase Storage: `alerts/<mac>/<yyyy-mm>/<filename>.wav`.
-  - INSERT en `events` con las 9 columnas nuevas rellenas.
+  - Upload del WAV a Supabase Storage: `alerts/<site_id>/<mac>/<yyyy-mm>/<filename>.wav`. `site_id` se resuelve server-side desde `devices.mac → site_id` antes del upload.
+  - INSERT en `acoustic_events` con `site_id` (resuelto server-side) + las columnas nuevas rellenas.
   - Al INSERT, **Supabase Realtime publica automáticamente** el evento a las 2 suscripciones ya activas del frontend.
   - Atomicidad: si INSERT falla tras upload, borrar objeto de bucket (compensación).
 - Respuestas tipadas: `200 {ok, event_id}`, `400 BAD_TOKEN`, `413 TOO_LARGE`, `500 STORAGE_FAILED`, `500 DB_FAILED`.
@@ -472,7 +483,7 @@ Migraciones y schema:
 
 Reorganización de código existente:
 - `lib/supabase/{client.ts, server.ts}` (nuevo, reemplaza `lib/supabase.ts`).
-- `lib/db/{organizations,sites,buildings,rooms,devices,events,profiles,pairing_codes}.ts` (nuevo, funciones extraídas del viejo `lib/supabase.ts`).
+- `lib/db/{organizations,sites,buildings,rooms,devices,acoustic_events,profiles,pairing_codes}.ts` (nuevo, funciones extraídas del viejo `lib/supabase.ts`).
 - `lib/services/{ingest,pairing,device-auth,heartbeat}.service.ts` (creados en fases siguientes).
 - `lib/validation/*.schema.ts` (zod, se irán añadiendo).
 - `lib/supabase.ts` (eliminar tras migración).
@@ -512,7 +523,7 @@ A eliminar:
 
 | Fase | Cómo probar |
 |---|---|
-| 0-A | En Supabase Studio: `events` con las 9 columnas nuevas, `pairing_codes` creada, `devices.ingest_token` + `devices.last_seen` presentes. Filas existentes intactas. Las 7 páginas del frontend actual siguen funcionando (verificar con `npm run build` + smoke test). `supabase db push` idempotente. Seed opcional (los datos de pruebas existentes bastan). |
+| 0-A | En Supabase Studio: `acoustic_events` con `site_id` + las 7 columnas nuevas, `pairing_codes` creada, `devices.ingest_token` + `devices.last_seen` presentes. Filas existentes intactas. Las páginas del frontend actual siguen funcionando (verificar con `npm run build` + smoke test). `supabase db push` idempotente. Seed opcional (los datos de pruebas existentes bastan). |
 | 0-B | Frontend sigue funcionando idéntico: 7 páginas OK, dashboard con Realtime OK, admin panel OK. `lib/supabase.ts` desaparece. Imports actualizados en 7 páginas apuntando a `lib/db/*` y `lib/supabase/client.ts`. `npm run build` pasa. zod instalado, un schema de ejemplo. |
 | 0-C | En incógnito: `/dashboard` sin login → redirect a `/login`. `/admin` sin ser super_admin → 403. `npm run build` con `ignoreBuildErrors: false` pasa (o los que queden documentados). `app/api/v1/telemetry/route.ts` eliminado. |
 | 1 | Serial monitor: BTN_SYNC (clic corto → PAUSED; clic largo → toggle sensibilidad) funciona idéntico a hoy. |
@@ -520,7 +531,7 @@ A eliminar:
 | 3 | Reboot: `ls /pending/` muestra 3 pares `.wav`/`.meta.json`; CSV y estados intactos. |
 | 4 | Al boot con NVS válida: `[WIFI] Conectado, IP: x.x.x.x, RSSI: -55`. Sin NVS: entra a `STATE_PAIRING` y levanta AP. |
 | 4-bis | Nodo sin credenciales → SSID `BioAlert-A3F2` visible. Portal aparece solo al conectar el móvil. Código válido → nodo se conecta y aparece "Online" en el portal SaaS en <30 s. Código expirado → LED rojo 2 s. Reset (BTN_SYNC+BTN_LABEL 5s) → NVS limpia. |
-| 5 | `curl -X POST -F "audio=@sample.wav" -F 'meta={...}' -H "X-Device-Token: dev-token-abc" https://<preview>.vercel.app/api/ingest` → 200 con `event_id`; fila visible en `events` con las 9 columnas rellenas; WAV visible en bucket `alerts/<mac>/<yyyy-mm>/`; navegador con Realtime activo recibe el evento en <2 s. |
+| 5 | `curl -X POST -F "audio=@sample.wav" -F 'meta={...}' -H "X-Device-Token: dev-token-abc" https://<preview>.vercel.app/api/ingest` → 200 con `event_id`; fila visible en `acoustic_events` con `site_id` + columnas nuevas rellenas; WAV visible en bucket `alerts/<site_id>/<mac>/<yyyy-mm>/`; navegador con Realtime activo recibe el evento en <2 s. |
 | 6 | Grabar alerta → tras <60 s el WAV desaparece de `/pending/`, aparece en bucket, fila en `acoustic_events` con etiqueta correcta. |
 | 7 | Cortar WiFi 5 min y grabar 3 alertas → cola de 3 en `/pending/`. Reconectar → drena en secuencia. Reboot mid-drenaje → reconstruye cola y continúa. |
 | 8 | Llenar SD manualmente hasta 45 MB de `/pending/` → descarte FIFO logueado; nuevas alertas siguen entrando. |
@@ -544,7 +555,7 @@ Se conserva Supabase como BaaS (Postgres + Auth + Storage + Realtime). **Sin bac
 bio-acoustic-frontend/
 ├── app/api/*/route.ts       ← handlers DELGADOS: parse + validate + call service
 ├── lib/services/*.ts        ← lógica de negocio testeable (independiente del framework)
-├── lib/db/*.ts              ← queries agrupadas por dominio (devices, events, ...)
+├── lib/db/*.ts              ← queries agrupadas por dominio (devices, acoustic_events, ...)
 └── lib/validation/*.ts      ← zod schemas
 ```
 
@@ -654,7 +665,7 @@ Esto es una operación real de release que planificamos en su propio documento c
 
 ## F. Notas operativas
 
-- **Bucket `alerts`:** hoy tiene INSERT/SELECT públicos. Como parte de la Fase 0, endurecer: INSERT sólo con service role, SELECT restringido por `farm_id` (RLS a través de un `event_id`). Esto es requisito antes de dejar el proxy en producción.
+- **Bucket `alerts`:** hoy tiene INSERT/SELECT públicos. Como parte de la Fase 0, endurecer: INSERT sólo con service role, SELECT restringido por `site_id` (RLS a través de un `event_id`). Esto es requisito antes de dejar el proxy en producción.
 - **Rotación del `ingest_token`:** documentar cómo se regenera desde el dashboard si un token se compromete.
 - **Modo offline extendido:** el nodo puede pasar semanas sin WiFi. El guardarraíl de 20 MB de cola limita a ~500 alertas antes de descarte FIFO. Ajustable si es insuficiente en campo.
 - **Compatibilidad hacia atrás:** los WAVs viejos en la raíz de la SD (pre-refactor) siguen ahí y no se suben. Si se quiere aprovecharlos, añadir un script one-off en Fase 6.5 que mueva `*.wav` de raíz a `/pending/` con `.meta.json` reconstruido desde el CSV.

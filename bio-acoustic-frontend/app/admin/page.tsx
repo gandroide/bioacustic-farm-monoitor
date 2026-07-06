@@ -47,7 +47,9 @@ import {
   Mail,
   Loader2,
   Building,
-  MapPin
+  MapPin,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import { HardwareFleetManagement } from "@/components/admin/hardware-fleet-management";
 import { KPISkeleton } from "@/components/dashboard/kpi-skeleton";
@@ -80,6 +82,7 @@ export default function AdminPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteFullName, setInviteFullName] = useState("");
   const [invitePassword, setInvitePassword] = useState("");
+  const [invitePasswordVisible, setInvitePasswordVisible] = useState(false);
   const [inviting, setInviting] = useState(false);
 
   // Create organization dialog
@@ -462,14 +465,25 @@ export default function AdminPage() {
               <Label htmlFor="invitePassword">
                 Contraseña Temporal <span className="text-red-500">*</span>
               </Label>
-              <Input
-                id="invitePassword"
-                type="text"
-                placeholder="Mínimo 6 caracteres"
-                value={invitePassword}
-                onChange={(e) => setInvitePassword(e.target.value)}
-                disabled={inviting}
-              />
+              <div className="relative">
+                <Input
+                  id="invitePassword"
+                  type={invitePasswordVisible ? "text" : "password"}
+                  placeholder="Mínimo 6 caracteres"
+                  value={invitePassword}
+                  onChange={(e) => setInvitePassword(e.target.value)}
+                  disabled={inviting}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setInvitePasswordVisible((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label={invitePasswordVisible ? "Ocultar contraseña" : "Mostrar contraseña"}
+                >
+                  {invitePasswordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">

@@ -373,6 +373,38 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 
 **Duración estimada Fase 0 completa (revisada 2026-07-05):** **~1 día con asistencia de IA.**
 
+### Fase 0-D — UI polish (bugs + consolidación + estructura) — 🚧 EN CURSO 2026-07-06
+
+Añadida el 2026-07-06 tras auditar el frontend con un agente. Alcance: cerrar bugs reales, unificar patrones y sacar componentes duplicados. No toca la stack (Tailwind v4 + shadcn/ui + Recharts) ni introduce dark/light toggle (código muerto `next-themes` queda para otra fase).
+
+**Bloque 1 — Bugs reales (~30 min):**
+- `components/dashboard/alerts-chart.tsx`: gradient de la 2ª serie usa `hsl(var(--primary))` pero las CSS vars son OKLCH → no rellena. Fix a valor OKLCH. Además leyenda dice "Confianza" pero dataKey es `rms` → renombrar.
+- `app/admin/page.tsx:467`: password en dialog "Invitar Admin" está en `type="text"`. Cambiar a `type="password"` + botón de toggle (Eye/EyeOff Lucide).
+- `app/login/page.tsx`: bloque de error sin `aria-live`. Y mensaje hardcoded ignora el error real de Supabase. Añadir `aria-live="polite"` y mostrar `err.message` cuando aplique.
+
+**Bloque 2 — Consolidación (~1-2h):**
+- Eliminar sistema `notification` (state local + Card animado) en `admin/inventory/page.tsx`, `admin/sites/[site_id]/page.tsx`, `dashboard/settings/farm/page.tsx`. Reemplazar por `toast.*()` de sonner (ya está global en `layout.tsx:49`).
+- Quitar emojis de decoración: 🟢🟡🔴 en `hardware-fleet-management.tsx`, ➕✏️🔗 en varios `DialogTitle`. Reemplazar por Lucide equivalentes.
+
+**Bloque 3 — Mejoras estructurales (~medio día):**
+- Extraer `components/layout/page-header.tsx` (`<PageHeader title subtitle actions/>`) y `components/dashboard/kpi-card.tsx` (`<KPICard title icon value subtitle badge tone/>`). Refactorizar 5 páginas para usarlos. Elimina ~600 líneas duplicadas.
+- Extraer `components/site-tree/{building-room-tree,device-card}.tsx` compartidos entre `admin/sites/[site_id]` y `dashboard/settings/farm`. Los dos son casi la misma UI con permisos distintos. Props: `canEdit`, `canDelete`, `showSimulator`.
+- Convertir `AppSidebar` en `<Sheet>` de shadcn para viewports < `lg`. Añadir hamburguesa en `<PageHeader>` mobile. Mover el toggle collapse dentro del sidebar (hoy vive en `absolute -right-3 top-20`, roto en mobile).
+
+**Fuera de scope 0-D (apuntado para más adelante):**
+- Dark/light theme toggle. `next-themes` instalado pero `<body className="… dark">` hardcoded en `layout.tsx:45`. Fase futura si hay demanda.
+- Tokenización de colores fuera de paleta (purple/slate/amber-500 hardcoded en fleet management por plan). Requiere decisión de branding.
+- Fuentes aliaseadas como `--font-geist-sans/mono` cuando son Inter/JetBrains Mono (nombres engañosos en `layout.tsx:7-15`). Cosmético.
+- Traducción del error de Supabase completa (solo mostramos `err.message` en Bloque 1, sin diccionario semántico).
+- Sidebar con más items por rol (hoy solo 2). Requiere trabajo de navegación, no de layout.
+
+**Commits previstos:**
+- `frontend: Fase 0-D bloque 1 — fix chart gradient, password toggle, login a11y`
+- `frontend: Fase 0-D bloque 2 — sonner unificado + quitar emojis decorativos`
+- `frontend: Fase 0-D bloque 3 — extract PageHeader, KPICard, SiteTree + sidebar responsive`
+
+---
+
 ### Fase 1 — Refactor mínimo de `buttonTask`
 - Introducir `struct Button` + array de dos entradas en `main.cpp`.
 - Sin cambios de comportamiento observables (BTN_SYNC funciona igual).

@@ -54,8 +54,8 @@ export function AlertsChart({ events }: AlertsChartProps) {
                 <stop offset="95%" stopColor="oklch(0.68 0.19 55)" stopOpacity={0}/>
               </linearGradient>
               <linearGradient id="rmsGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                <stop offset="5%" stopColor="oklch(0.5 0.15 165)" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="oklch(0.5 0.15 165)" stopOpacity={0}/>
               </linearGradient>
             </defs>
             <CartesianGrid 
@@ -136,7 +136,7 @@ export function AlertsChart({ events }: AlertsChartProps) {
               yAxisId="right"
               type="monotone"
               dataKey="rms"
-              stroke="hsl(var(--primary))"
+              stroke="oklch(0.5 0.15 165)"
               fill="url(#rmsGradient)"
               strokeWidth={2}
             />
@@ -151,7 +151,7 @@ export function AlertsChart({ events }: AlertsChartProps) {
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-accent" />
-            <span className="text-muted-foreground">Confianza</span>
+            <span className="text-muted-foreground">RMS Promedio</span>
           </div>
         </div>
       </CardContent>

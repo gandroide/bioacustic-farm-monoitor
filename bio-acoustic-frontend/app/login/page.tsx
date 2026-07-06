@@ -39,9 +39,13 @@ export default function LoginPage() {
       router.refresh(); // Refresca rutas
       router.push('/dashboard'); 
       
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      setError("Credenciales inválidas o error de conexión.");
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Credenciales inválidas o error de conexión.";
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -113,12 +117,18 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {error && (
-              <div className="flex items-center gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-sm animate-in fade-in slide-in-from-top-1">
-                <AlertCircle className="h-4 w-4" />
-                <span>{error}</span>
-              </div>
-            )}
+            <div
+              role="alert"
+              aria-live="polite"
+              className={error ? "block" : "sr-only"}
+            >
+              {error && (
+                <div className="flex items-center gap-2 p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-sm animate-in fade-in slide-in-from-top-1">
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
 
             <Button 
               type="submit"

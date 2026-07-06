@@ -1,129 +1,102 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Activity, Bell, Zap, Waves } from "lucide-react";
 import { Event } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { KPICard, type KPITone } from "./kpi-card";
+import type { ReactNode } from "react";
 
 interface KPICardsProps {
   events: Event[];
 }
 
+type BadgeTone = "danger" | "warning" | "success" | "default";
+
+const badgeToneClass = (tone: BadgeTone) =>
+  tone === "danger"
+    ? "alert-danger"
+    : tone === "warning"
+      ? "alert-warning"
+      : tone === "success"
+        ? "alert-success"
+        : "bg-muted text-muted-foreground";
+
+const badgeNode = (label: string | null, tone: BadgeTone): ReactNode =>
+  label ? (
+    <Badge variant="outline" className={cn("text-[10px] font-mono", badgeToneClass(tone))}>
+      {label}
+    </Badge>
+  ) : null;
+
 export function KPICards({ events }: KPICardsProps) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
-  const todayEvents = events.filter(e => new Date(e.created_at) >= today);
+
+  const todayEvents = events.filter((e) => new Date(e.created_at) >= today);
   const totalAlertsToday = todayEvents.length;
-  
+
   const lastEvent = events[0];
-  const lastAlertTime = lastEvent 
-    ? new Date(lastEvent.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-    : '--:--';
-  
+  const lastAlertTime = lastEvent
+    ? new Date(lastEvent.created_at).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+    : "--:--";
+
   const avgNoiseLevel = events.length > 0
     ? Math.round(events.reduce((sum, e) => sum + (e.rms_level || 0), 0) / events.length)
     : 0;
-  
+
   const systemStatus: "online" | "offline" = "online";
 
-  const cards = [
-    {
-      title: "Alertas Hoy",
-      value: totalAlertsToday,
-      subtitle: "Período de 24h",
-      icon: Bell,
-      badge: totalAlertsToday > 0 ? `${totalAlertsToday} detectadas` : 'Sin alertas',
-      badgeVariant: totalAlertsToday > 10 ? "danger" : totalAlertsToday > 0 ? "warning" : "success",
-      color: totalAlertsToday > 10 ? "text-red-500" : "text-primary",
-      glowClass: totalAlertsToday > 10 ? "glow-danger" : "glow-warning",
-      iconBg: totalAlertsToday > 10 ? "bg-red-500/10" : "bg-primary/10",
-    },
-    {
-      title: "Última Alerta",
-      value: lastAlertTime,
-      subtitle: "Evento más reciente",
-      icon: Activity,
-      badge: lastEvent?.device_id ? `Nodo: ${lastEvent.device_id}` : null,
-      badgeVariant: "default",
-      color: "text-primary",
-      glowClass: "glow-warning",
-      iconBg: "bg-primary/10",
-    },
-    {
-      title: "Nivel de Ruido",
-      value: `${avgNoiseLevel} RMS`,
-      subtitle: "Amplitud promedio",
-      icon: Waves,
-      badge: avgNoiseLevel > 0 ? "Rango normal" : null,
-      badgeVariant: "success",
-      color: "text-accent",
-      glowClass: "glow-success",
-      iconBg: "bg-emerald-500/10",
-    },
-    {
-      title: "Estado",
-      value: systemStatus === "online" ? "Operacional" : "Fuera de línea",
-      subtitle: "Sensores edge",
-      icon: Zap,
-      badge: systemStatus === "online" ? "✓ Todos activos" : "⚠ Fallo detectado",
-      badgeVariant: systemStatus === "online" ? "success" : "danger",
-      color: systemStatus === "online" ? "text-emerald-500" : "text-red-500",
-      glowClass: systemStatus === "online" ? "glow-success" : "glow-danger",
-      iconBg: systemStatus === "online" ? "bg-emerald-500/10" : "bg-red-500/10",
-    },
-  ];
+  const alertsTone: KPITone = totalAlertsToday > 10 ? "red" : "primary";
+  const statusTone: KPITone = systemStatus === "online" ? "emerald" : "red";
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      {cards.map((card, index) => {
-        const Icon = card.icon;
-        const badgeClass = card.badgeVariant === "danger" 
-          ? "alert-danger" 
-          : card.badgeVariant === "warning" 
-            ? "alert-warning" 
-            : card.badgeVariant === "success"
-              ? "alert-success"
-              : "bg-muted text-muted-foreground";
+      <KPICard
+        stagger={1}
+        tone={alertsTone}
+        title="Alertas Hoy"
+        icon={<Bell className={cn("h-[18px] w-[18px]", alertsTone === "red" ? "text-red-500" : "text-primary")} strokeWidth={2} />}
+        value={totalAlertsToday}
+        subtitle="Período de 24h"
+        footer={badgeNode(
+          totalAlertsToday > 0 ? `${totalAlertsToday} detectadas` : "Sin alertas",
+          totalAlertsToday > 10 ? "danger" : totalAlertsToday > 0 ? "warning" : "success",
+        )}
+      />
 
-        return (
-          <Card 
-            key={index} 
-            className={cn(
-              "glass-effect card-hover animate-in-view",
-              `stagger-${index + 1}`
-            )}
-          >
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {card.title}
-              </CardTitle>
-              <div className={cn("flex h-9 w-9 items-center justify-center rounded-lg", card.iconBg)}>
-                <Icon className={cn("h-[18px] w-[18px]", card.color)} strokeWidth={2} />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className={cn("text-2xl font-bold tracking-tight", card.color)}>
-                {card.value}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {card.subtitle}
-              </p>
-              {card.badge && (
-                <div className="mt-3">
-                  <Badge 
-                    variant="outline" 
-                    className={cn("text-[10px] font-mono", badgeClass)}
-                  >
-                    {card.badge}
-                  </Badge>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        );
-      })}
+      <KPICard
+        stagger={2}
+        tone="primary"
+        title="Última Alerta"
+        icon={<Activity className="h-[18px] w-[18px] text-primary" strokeWidth={2} />}
+        value={lastAlertTime}
+        subtitle="Evento más reciente"
+        footer={badgeNode(lastEvent?.device_id ? `Nodo: ${lastEvent.device_id}` : null, "default")}
+      />
+
+      <KPICard
+        stagger={3}
+        tone="emerald"
+        title="Nivel de Ruido"
+        icon={<Waves className="h-[18px] w-[18px] text-emerald-500" strokeWidth={2} />}
+        value={`${avgNoiseLevel} RMS`}
+        subtitle="Amplitud promedio"
+        footer={badgeNode(avgNoiseLevel > 0 ? "Rango normal" : null, "success")}
+      />
+
+      <KPICard
+        stagger={4}
+        tone={statusTone}
+        title="Estado"
+        icon={<Zap className={cn("h-[18px] w-[18px]", statusTone === "emerald" ? "text-emerald-500" : "text-red-500")} strokeWidth={2} />}
+        value={systemStatus === "online" ? "Operacional" : "Fuera de línea"}
+        subtitle="Sensores edge"
+        footer={badgeNode(
+          systemStatus === "online" ? "Todos activos" : "Fallo detectado",
+          systemStatus === "online" ? "success" : "danger",
+        )}
+      />
     </div>
   );
 }

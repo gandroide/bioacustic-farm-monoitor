@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase, Event, getCurrentUserProfile, getUserOrganization, getSiteById } from "@/lib/supabase";
 import { KPICards } from "@/components/dashboard/kpi-cards";
+import { PageHeader } from "@/components/layout/page-header";
 import { AlertsChart } from "@/components/dashboard/alerts-chart";
 import { EventsTable } from "@/components/dashboard/events-table";
 import { KPISkeleton } from "@/components/dashboard/kpi-skeleton";
@@ -158,14 +159,11 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-card/30">
       {/* Page Content */}
       <div className="px-6 lg:px-8 py-8 space-y-8">
-        {/* Page Header */}
-        <div className="flex items-center justify-between animate-in-view stagger-1">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Resumen en Tiempo Real</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-sm text-muted-foreground">
-                Análisis bioacústico y gestión de alertas
-              </p>
+        <PageHeader
+          title="Resumen en Tiempo Real"
+          subtitle={
+            <div className="flex items-center gap-2">
+              <span>Análisis bioacústico y gestión de alertas</span>
               {organizationName && (
                 <>
                   <span className="text-muted-foreground/40">•</span>
@@ -183,17 +181,19 @@ export default function DashboardPage() {
                 </>
               )}
             </div>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Actualizar"
-          >
-            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
-          </Button>
-        </div>
+          }
+          actions={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Actualizar"
+            >
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+            </Button>
+          }
+        />
 
         {/* KPIs */}
         {loading ? <KPISkeleton /> : <KPICards events={events} />}

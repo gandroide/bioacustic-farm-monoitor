@@ -15,7 +15,6 @@ import {
   createSite
 } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,6 +52,8 @@ import {
 } from "lucide-react";
 import { HardwareFleetManagement } from "@/components/admin/hardware-fleet-management";
 import { KPISkeleton } from "@/components/dashboard/kpi-skeleton";
+import { KPICard } from "@/components/dashboard/kpi-card";
+import { PageHeader } from "@/components/layout/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -249,155 +250,112 @@ export default function AdminPage() {
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-card/30">
       {/* Page Content */}
       <div className="px-6 lg:px-8 py-8 space-y-8">
-        {/* Page Header */}
-        <div className="flex items-center justify-between animate-in-view stagger-1">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Centro de Comando</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Monitoreo de flota IoT, suscripciones y salud del negocio
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              title="Actualizar"
-            >
-              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
-            </Button>
-            <Button
-              onClick={() => setCreateOrgDialogOpen(true)}
-              className="gap-2"
-            >
-              <Building className="h-4 w-4" />
-              <span className="hidden sm:inline">Nueva Organización</span>
-            </Button>
-          </div>
-        </div>
+        <PageHeader
+          title="Centro de Comando"
+          subtitle="Monitoreo de flota IoT, suscripciones y salud del negocio"
+          actions={
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Actualizar"
+              >
+                <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+              </Button>
+              <Button onClick={() => setCreateOrgDialogOpen(true)} className="gap-2">
+                <Building className="h-4 w-4" />
+                <span className="hidden sm:inline">Nueva Organización</span>
+              </Button>
+            </>
+          }
+        />
 
         {/* KPIs */}
         {loading ? (
           <KPISkeleton />
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {/* KPI 1: MRR */}
-            <Card className="glass-effect card-hover animate-in-view stagger-1">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  MRR (Ingresos)
-                </CardTitle>
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10">
-                  <DollarSign className="h-[18px] w-[18px] text-emerald-500" strokeWidth={2} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-emerald-500 tracking-tight">
-                  ${totalMRR.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Estado financiero mensual
-                </p>
-                {totalMRR > 0 && (
-                  <div className="flex items-center gap-2 mt-3">
+            <KPICard
+              stagger={1}
+              tone="emerald"
+              title="MRR (Ingresos)"
+              icon={<DollarSign className="h-[18px] w-[18px] text-emerald-500" strokeWidth={2} />}
+              value={`$${totalMRR.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}
+              subtitle="Estado financiero mensual"
+              footer={
+                totalMRR > 0 && (
+                  <div className="flex items-center gap-2">
                     <TrendingUp className="h-3 w-3 text-emerald-500" />
                     <Badge variant="outline" className="text-[10px] font-mono alert-success">
                       {organizations.length} organizaciones
                     </Badge>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                )
+              }
+            />
 
-            {/* KPI 2: Fleet Health */}
-            <Card className={cn(
-              "glass-effect card-hover animate-in-view stagger-2",
-              offlineNodes > 0 && "border-red-500/20"
-            )}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Salud de la Flota
-                </CardTitle>
-                <div className={cn(
-                  "flex h-9 w-9 items-center justify-center rounded-lg",
-                  offlineNodes > 0 ? "bg-red-500/10" : "bg-emerald-500/10"
-                )}>
-                  <Cpu className={cn("h-[18px] w-[18px]", offlineNodes > 0 ? "text-red-500" : "text-emerald-500")} strokeWidth={2} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className={cn("text-2xl font-bold tracking-tight", offlineNodes > 0 ? "text-red-500" : "text-emerald-500")}>
-                  {onlineNodes}/{totalNodes} Online
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Dispositivos en {sites.length} sitios
-                </p>
-                <div className="mt-3">
-                  {offlineNodes > 0 ? (
-                    <Badge variant="outline" className="text-[10px] font-mono alert-danger">
-                      <AlertCircle className="h-3 w-3 mr-1" />
-                      {offlineNodes} nodos offline
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-[10px] font-mono alert-success">
-                      ✓ Flota operativa
-                    </Badge>
+            <KPICard
+              stagger={2}
+              tone={offlineNodes > 0 ? "red" : "emerald"}
+              className={offlineNodes > 0 ? "border-red-500/20" : undefined}
+              title="Salud de la Flota"
+              icon={
+                <Cpu
+                  className={cn(
+                    "h-[18px] w-[18px]",
+                    offlineNodes > 0 ? "text-red-500" : "text-emerald-500",
                   )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* KPI 3: Cloud Costs */}
-            <Card className="glass-effect card-hover animate-in-view stagger-3">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Costos de Nube
-                </CardTitle>
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                  <CloudLightning className="h-[18px] w-[18px] text-primary" strokeWidth={2} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-primary tracking-tight">
-                  Supabase
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Uso de recursos cloud
-                </p>
-                <div className="mt-3">
-                  <Badge variant="outline" className="text-[10px] font-mono alert-warning">
-                    ⚡ Plan activo
+                  strokeWidth={2}
+                />
+              }
+              value={`${onlineNodes}/${totalNodes} Online`}
+              subtitle={`Dispositivos en ${sites.length} sitios`}
+              footer={
+                offlineNodes > 0 ? (
+                  <Badge variant="outline" className="text-[10px] font-mono alert-danger">
+                    <AlertCircle className="h-3 w-3 mr-1" />
+                    {offlineNodes} nodos offline
                   </Badge>
-                </div>
-              </CardContent>
-            </Card>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] font-mono alert-success">
+                    Flota operativa
+                  </Badge>
+                )
+              }
+            />
 
-            {/* KPI 4: Subscriptions */}
-            <Card className="glass-effect card-hover animate-in-view stagger-4">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Suscripciones
-                </CardTitle>
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                  <Users className="h-[18px] w-[18px] text-primary" strokeWidth={2} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-primary tracking-tight">
-                  {activeSubscriptions} Activas
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Clientes pagando actualmente
-                </p>
-                <div className="flex items-center gap-2 mt-3">
+            <KPICard
+              stagger={3}
+              tone="primary"
+              title="Costos de Nube"
+              icon={<CloudLightning className="h-[18px] w-[18px] text-primary" strokeWidth={2} />}
+              value="Supabase"
+              subtitle="Uso de recursos cloud"
+              footer={
+                <Badge variant="outline" className="text-[10px] font-mono alert-warning">
+                  Plan activo
+                </Badge>
+              }
+            />
+
+            <KPICard
+              stagger={4}
+              tone="primary"
+              title="Suscripciones"
+              icon={<Users className="h-[18px] w-[18px] text-primary" strokeWidth={2} />}
+              value={`${activeSubscriptions} Activas`}
+              subtitle="Clientes pagando actualmente"
+              footer={
+                <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-3 w-3 text-emerald-500" />
                   <Badge variant="outline" className="text-[10px] font-mono alert-success">
                     {organizations.length - activeSubscriptions} en trial
                   </Badge>
                 </div>
-              </CardContent>
-            </Card>
+              }
+            />
           </div>
         )}
 

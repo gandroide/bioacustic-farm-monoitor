@@ -373,7 +373,7 @@ Cada fase es un commit auto-contenido y no rompe `main`. Mergeables independient
 
 **Duración estimada Fase 0 completa (revisada 2026-07-05):** **~1 día con asistencia de IA.**
 
-### Fase 0-D — UI polish (bugs + consolidación + estructura) — 🚧 EN CURSO 2026-07-06
+### Fase 0-D — UI polish (bugs + consolidación + estructura) — ✅ COMPLETADA 2026-07-06
 
 Añadida el 2026-07-06 tras auditar el frontend con un agente. Alcance: cerrar bugs reales, unificar patrones y sacar componentes duplicados. No toca la stack (Tailwind v4 + shadcn/ui + Recharts) ni introduce dark/light toggle (código muerto `next-themes` queda para otra fase).
 
@@ -398,10 +398,24 @@ Añadida el 2026-07-06 tras auditar el frontend con un agente. Alcance: cerrar b
 - Traducción del error de Supabase completa (solo mostramos `err.message` en Bloque 1, sin diccionario semántico).
 - Sidebar con más items por rol (hoy solo 2). Requiere trabajo de navegación, no de layout.
 
-**Commits previstos:**
-- `frontend: Fase 0-D bloque 1 — fix chart gradient, password toggle, login a11y`
-- `frontend: Fase 0-D bloque 2 — sonner unificado + quitar emojis decorativos`
-- `frontend: Fase 0-D bloque 3 — extract PageHeader, KPICard, SiteTree + sidebar responsive`
+**Commits aplicados:**
+- `f5e99fc` — bloque 1 (bugs reales).
+- `cb3aa3a` — bloque 2 (sonner + emojis).
+- `510cbf5` — bloque 3a (PageHeader + KPICard).
+- `10ec9a6` — bloque 3b (BuildingRoomTree + DeviceCard).
+- `b8b9040` — bloque 3c (sidebar responsive Sheet).
+
+**Nuevos componentes reusables:**
+- `components/layout/page-header.tsx` (23 líneas).
+- `components/dashboard/kpi-card.tsx` (60 líneas).
+- `components/site-tree/{building-room-tree,device-card,types}.ts` (~340 líneas).
+
+**Verificación manual pendiente** (requiere navegador real):
+- Login: error de Supabase se muestra real (no genérico).
+- Password toggle en dialog "Invitar Admin" oculta/muestra caracteres.
+- Chart de dashboard renderiza AMBAS series con fill (antes la 2ª no rellenaba).
+- Toasts sonner reemplazan al banner Card en /admin/inventory, /admin/sites/[id], /dashboard/settings/farm.
+- Sidebar mobile: viewport < 1024px muestra top bar con hamburguesa; abre drawer al pulsarla.
 
 ---
 

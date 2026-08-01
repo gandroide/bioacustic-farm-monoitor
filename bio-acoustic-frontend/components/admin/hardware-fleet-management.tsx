@@ -12,11 +12,12 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { 
-  Cpu, 
-  MapPin, 
+import {
+  Cpu,
+  MapPin,
   Calendar,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   ExternalLink,
   Activity,
@@ -92,8 +93,9 @@ export function HardwareFleetManagement({ sites, organizations, onUpdate, onInvi
     if (isHealthy) {
       return (
         <div className="flex items-center gap-2">
-          <Badge className="alert-success font-mono text-xs px-3">
-            {online}/{total} 🟢
+          <Badge className="alert-success font-mono text-xs px-3 flex items-center gap-1">
+            <CheckCircle2 className="h-3 w-3" />
+            {online}/{total}
           </Badge>
           <span className="text-xs text-emerald-500 font-medium">100% Online</span>
         </div>
@@ -103,18 +105,22 @@ export function HardwareFleetManagement({ sites, organizations, onUpdate, onInvi
     if (isCritical) {
       return (
         <div className="flex items-center gap-2">
-          <Badge className="alert-danger font-mono text-xs px-3 animate-pulse">
-            {online}/{total} 🔴
+          <Badge className="alert-danger font-mono text-xs px-3 animate-pulse flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {online}/{total}
           </Badge>
-          <span className="text-xs text-red-500 font-medium">⚠️ Crítico</span>
+          <span className="text-xs text-red-500 font-medium flex items-center gap-1">
+            <AlertTriangle className="h-3 w-3" /> Crítico
+          </span>
         </div>
       );
     }
 
     return (
       <div className="flex items-center gap-2">
-        <Badge className="alert-warning font-mono text-xs px-3">
-          {online}/{total} 🟡
+        <Badge className="alert-warning font-mono text-xs px-3 flex items-center gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          {online}/{total}
         </Badge>
         <span className="text-xs text-amber-500 font-medium">Atención requerida</span>
       </div>
@@ -133,7 +139,7 @@ export function HardwareFleetManagement({ sites, organizations, onUpdate, onInvi
     } else if (online / total >= 0.6) {
       return <span className="text-amber-500 text-xs">• Parcial</span>;
     } else {
-      return <span className="text-red-500 text-xs">• Crítico ⚠️</span>;
+      return <span className="text-red-500 text-xs flex items-center gap-1">• Crítico <AlertTriangle className="h-3 w-3" /></span>;
     }
   };
 
@@ -227,8 +233,8 @@ export function HardwareFleetManagement({ sites, organizations, onUpdate, onInvi
                             {getHealthStatus(site.online_nodes, site.total_nodes)}
                           </div>
                           {offlineNodes > 0 && (
-                            <div className="text-xs text-red-500 font-medium">
-                              ⚠️ {offlineNodes} nodo{offlineNodes > 1 ? 's' : ''} caído{offlineNodes > 1 ? 's' : ''}
+                            <div className="text-xs text-red-500 font-medium flex items-center gap-1">
+                              <AlertTriangle className="h-3 w-3" /> {offlineNodes} nodo{offlineNodes > 1 ? 's' : ''} caído{offlineNodes > 1 ? 's' : ''}
                             </div>
                           )}
                         </div>
@@ -286,15 +292,15 @@ export function HardwareFleetManagement({ sites, organizations, onUpdate, onInvi
         <div className="mt-4 pt-4 border-t border-border/30">
           <div className="flex items-center gap-6 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
-              <span className="text-lg">🟢</span>
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
               <span>100% Online</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-lg">🟡</span>
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
               <span>60-99% Online (Atención)</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-lg">🔴</span>
+              <AlertCircle className="h-4 w-4 text-red-500" />
               <span>&lt;60% Online (Crítico)</span>
             </div>
             <div className="ml-auto text-xs">

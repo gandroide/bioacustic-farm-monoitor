@@ -1,0 +1,11 @@
+# Supabase
+.branches
+.temp
+
+# Audit dumps generados con pg_dump — contienen schema completo, no van al repo
+audit-*.sql
+
+# dotenvx
+.env.keys
+.env.local
+.env.*.local

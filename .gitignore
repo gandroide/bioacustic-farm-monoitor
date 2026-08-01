@@ -24,6 +24,10 @@ node_modules/
 out/
 .vercel
 
+# ── Supabase CLI (migraciones locales) ──
+supabase/.temp/
+supabase/.branches/
+
 # ── PlatformIO / Firmware ──
 .pio/
 compile_commands.json

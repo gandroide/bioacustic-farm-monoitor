@@ -19,13 +19,10 @@ import {
   deleteRoom,
   claimDeviceToRoom,
   Site,
-  Building,
-  Room,
   Device
 } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -46,25 +43,15 @@ import {
 import {
   ArrowLeft,
   Building2,
-  Home,
-  Cpu,
   Plus,
-  Edit2,
-  Trash2,
   Settings,
   Save,
-  CheckCircle2,
   AlertCircle
 } from "lucide-react";
+import { toast } from "sonner";
+import { BuildingRoomTree } from "@/components/site-tree/building-room-tree";
+import type { BuildingWithRooms } from "@/components/site-tree/types";
 
-
-interface RoomWithDevices extends Room {
-  devices: Device[];
-}
-
-interface BuildingWithRooms extends Building {
-  rooms: RoomWithDevices[];
-}
 
 interface SiteWithStructure extends Site {
   buildings: BuildingWithRooms[];
@@ -96,7 +83,6 @@ export default function FarmSettingsPage() {
     deviceUid: ""
   });
   const [submitting, setSubmitting] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const fetchData = async () => {
     try {
@@ -192,11 +178,6 @@ export default function FarmSettingsPage() {
     fetchData();
   }, []);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), 3000);
-  };
-
   const openDialog = (mode: DialogMode, data?: Partial<DialogState>) => {
     setDialogState({ mode, ...data });
     setFormData({
@@ -226,10 +207,10 @@ export default function FarmSettingsPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newBuilding) {
-            showNotification('success', '✅ Edificio creado correctamente');
+            toast.success('Edificio creado correctamente');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al crear edificio');
+            toast.error('Error al crear edificio');
           }
           break;
 
@@ -242,10 +223,10 @@ export default function FarmSettingsPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newRoom) {
-            showNotification('success', '✅ Sala creada correctamente');
+            toast.success('Sala creada correctamente');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al crear sala');
+            toast.error('Error al crear sala');
           }
           break;
 
@@ -256,10 +237,10 @@ export default function FarmSettingsPage() {
             building_type: formData.type || undefined
           });
           if (buildingUpdated) {
-            showNotification('success', '✅ Edificio actualizado');
+            toast.success('Edificio actualizado');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al actualizar edificio');
+            toast.error('Error al actualizar edificio');
           }
           break;
 
@@ -270,10 +251,10 @@ export default function FarmSettingsPage() {
             room_type: formData.type || undefined
           });
           if (roomUpdated) {
-            showNotification('success', '✅ Sala actualizada');
+            toast.success('Sala actualizada');
             await fetchData();
           } else {
-            showNotification('error', '❌ Error al actualizar sala');
+            toast.error('Error al actualizar sala');
           }
           break;
 
@@ -281,17 +262,17 @@ export default function FarmSettingsPage() {
           if (!dialogState.roomId || !formData.deviceUid) return;
           const claimed = await claimDeviceToRoom(formData.deviceUid, dialogState.roomId);
           if (claimed) {
-            showNotification('success', '✅ Dispositivo vinculado correctamente');
+            toast.success('Dispositivo vinculado correctamente');
             await fetchData();
           } else {
-            showNotification('error', '❌ Dispositivo no encontrado o error al vincular');
+            toast.error('Dispositivo no encontrado o error al vincular');
           }
           break;
       }
       closeDialog();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
-      showNotification('error', '❌ Error en la operación');
+      toast.error('Error en la operación');
     } finally {
       setSubmitting(false);
     }
@@ -308,14 +289,14 @@ export default function FarmSettingsPage() {
         : await deleteRoom(id);
 
       if (success) {
-        showNotification('success', `✅ ${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
+        toast.success(`${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
         await fetchData();
       } else {
-        showNotification('error', '❌ Error al eliminar');
+        toast.error('Error al eliminar');
       }
     } catch (error) {
       console.error('Error deleting:', error);
-      showNotification('error', '❌ Error al eliminar');
+      toast.error('Error al eliminar');
     }
   };
 
@@ -372,26 +353,6 @@ export default function FarmSettingsPage() {
         </div>
       </header>
 
-      {/* Notification */}
-      {notification && (
-        <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-top">
-          <Card className={`${
-            notification.type === 'success' 
-              ? 'border-emerald-500/50 bg-emerald-500/10' 
-              : 'border-red-500/50 bg-red-500/10'
-          }`}>
-            <CardContent className="p-4 flex items-center gap-2">
-              {notification.type === 'success' ? (
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              ) : (
-                <AlertCircle className="h-5 w-5 text-red-500" />
-              )}
-              <span className="text-sm font-medium">{notification.message}</span>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-6">
         {/* Add Building Button */}
@@ -416,167 +377,45 @@ export default function FarmSettingsPage() {
         </Card>
 
         {/* Buildings List */}
-        {site.buildings.length === 0 ? (
-          <Card className="glass-effect">
-            <CardContent className="py-12 text-center">
-              <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" strokeWidth={1.5} />
-              <p className="text-lg font-medium text-muted-foreground">No tienes edificios registrados</p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Comienza agregando tu primer edificio o nave
-              </p>
-              <Button onClick={() => openDialog('add_building')} className="mt-4">
-                <Plus className="h-4 w-4 mr-2" />
-                Agregar Primer Edificio
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-6">
-            {site.buildings.map((building) => (
-              <Card key={building.id} className="glass-effect">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Building2 className="h-6 w-6 text-primary" strokeWidth={2} />
-                      <div>
-                        <CardTitle className="text-lg">{building.name}</CardTitle>
-                        {building.building_type && (
-                          <Badge variant="outline" className="mt-1 text-xs">
-                            {building.building_type}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openDialog('edit_building', {
-                          buildingId: building.id,
-                          currentName: building.name,
-                          currentType: building.building_type || undefined
-                        })}
-                      >
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete('building', building.id)}
-                        className="text-red-500 hover:text-red-600"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => openDialog('add_room', { buildingId: building.id })}
-                      >
-                        <Plus className="h-4 w-4 mr-1" />
-                        Agregar Sala
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {building.rooms.length === 0 ? (
-                    <div className="text-center py-8 border border-dashed border-border rounded-lg">
-                      <Home className="h-8 w-8 mx-auto mb-2 opacity-50" strokeWidth={1.5} />
-                      <p className="text-sm text-muted-foreground">No hay salas en este edificio</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openDialog('add_room', { buildingId: building.id })}
-                        className="mt-3"
-                      >
-                        <Plus className="h-3 w-3 mr-1" />
-                        Agregar Primera Sala
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {building.rooms.map((room) => (
-                        <div key={room.id} className="border border-border/50 rounded-lg p-4 bg-muted/30">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <Home className="h-4 w-4 text-amber-500" strokeWidth={2} />
-                              <span className="font-medium text-sm">{room.name}</span>
-                              {room.room_type && (
-                                <Badge variant="outline" className="text-xs">
-                                  {room.room_type}
-                                </Badge>
-                              )}
-                              <Badge variant="outline" className="text-xs">
-                                <Cpu className="h-3 w-3 mr-1" />
-                                {room.devices.length} dispositivo{room.devices.length !== 1 ? 's' : ''}
-                              </Badge>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openDialog('edit_room', {
-                                  roomId: room.id,
-                                  currentName: room.name,
-                                  currentType: room.room_type || undefined
-                                })}
-                              >
-                                <Edit2 className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDelete('room', room.id)}
-                                className="text-red-500 hover:text-red-600"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openDialog('claim_device', { roomId: room.id })}
-                              >
-                                <Plus className="h-3 w-3 mr-1" />
-                                Vincular Dispositivo
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* Devices List */}
-                          {room.devices.length > 0 && (
-                            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 mt-3">
-                              {room.devices.map((device) => (
-                                <div
-                                  key={device.id}
-                                  className="border border-border/30 rounded-md p-2 bg-background/50"
-                                >
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <Cpu className="h-3 w-3 text-emerald-500" />
-                                    <span className="text-xs font-medium">{device.name || 'Sin nombre'}</span>
-                                    <Badge 
-                                      variant="outline" 
-                                      className={`text-[10px] ml-auto ${
-                                        device.status === 'online' ? 'alert-success' : 'alert-danger'
-                                      }`}
-                                    >
-                                      {device.status}
-                                    </Badge>
-                                  </div>
-                                  <p className="text-[10px] font-mono text-muted-foreground">
-                                    UID: {device.uid || device.mac_address || device.device_id || 'Sin Identificador'}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+        <BuildingRoomTree
+          buildings={site.buildings}
+          deviceVariant="compact"
+          canEdit
+          isDeviceOnline={(device: Device) => device.status === "online"}
+          onAddRoom={(buildingId) => openDialog("add_room", { buildingId })}
+          onEditBuilding={(b) =>
+            openDialog("edit_building", {
+              buildingId: b.id,
+              currentName: b.name,
+              currentType: b.building_type || undefined,
+            })
+          }
+          onDeleteBuilding={(b) => handleDelete("building", b.id)}
+          onEditRoom={(_b, r) =>
+            openDialog("edit_room", {
+              roomId: r.id,
+              currentName: r.name,
+              currentType: r.room_type || undefined,
+            })
+          }
+          onDeleteRoom={(_b, r) => handleDelete("room", r.id)}
+          onClaimDevice={(roomId) => openDialog("claim_device", { roomId })}
+          emptyState={
+            <Card className="glass-effect">
+              <CardContent className="py-12 text-center">
+                <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" strokeWidth={1.5} />
+                <p className="text-lg font-medium text-muted-foreground">No tienes edificios registrados</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Comienza agregando tu primer edificio o nave
+                </p>
+                <Button onClick={() => openDialog("add_building")} className="mt-4">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Agregar Primer Edificio
+                </Button>
+              </CardContent>
+            </Card>
+          }
+        />
       </main>
 
       {/* Universal Dialog */}
@@ -584,11 +423,11 @@ export default function FarmSettingsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {dialogState.mode === 'add_building' && '➕ Agregar Nuevo Edificio/Nave'}
-              {dialogState.mode === 'add_room' && '➕ Agregar Nueva Sala'}
-              {dialogState.mode === 'edit_building' && '✏️ Editar Edificio'}
-              {dialogState.mode === 'edit_room' && '✏️ Editar Sala'}
-              {dialogState.mode === 'claim_device' && '🔗 Vincular Dispositivo IoT'}
+              {dialogState.mode === 'add_building' && 'Agregar Nuevo Edificio/Nave'}
+              {dialogState.mode === 'add_room' && 'Agregar Nueva Sala'}
+              {dialogState.mode === 'edit_building' && 'Editar Edificio'}
+              {dialogState.mode === 'edit_room' && 'Editar Sala'}
+              {dialogState.mode === 'claim_device' && 'Vincular Dispositivo IoT'}
             </DialogTitle>
             <DialogDescription asChild>
               <div>

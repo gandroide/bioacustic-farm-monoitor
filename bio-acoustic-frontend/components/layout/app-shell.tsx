@@ -68,12 +68,10 @@ export function AppShell({ children, requiredRole }: AppShellProps) {
   return (
     <div className="min-h-screen bg-background">
       <AppSidebar role={requiredRole} userName={userName} orgName={orgName} />
-      
-      {/* Main content area — offset by sidebar width */}
-      <main className="transition-all duration-300 pl-[68px] lg:pl-[240px]">
-        <div className="min-h-screen">
-          {children}
-        </div>
+
+      {/* Main content area — offset by sidebar width on desktop, mobile top bar on smaller screens */}
+      <main className="transition-all duration-300 pt-14 lg:pt-0 lg:pl-[240px]">
+        <div className="min-h-screen">{children}</div>
       </main>
     </div>
   );

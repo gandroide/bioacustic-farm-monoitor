@@ -1,6 +1,13 @@
 # 🐷 Bio-Alert — Sistema de Monitoreo Bioacústico
 
-Plataforma de monitoreo bioacústico para granjas porcinas. Fase actual: **Dataset Builder** — recolección de audio en el borde (ESP32-S3) sobre eventos disparados por RMS + capturas ambientales periódicas, para entrenar un modelo de Edge AI/ML que detecte estrés porcino (p. ej. aplastamiento de lechones). El SaaS multi-tenant consume y gestiona los eventos.
+Plataforma de monitoreo bioacústico para granjas porcinas. Fase actual: **Dataset Builder** — recolección de audio en el borde (ESP32-S3) sobre eventos disparados por RMS + capturas ambientales periódicas, para entrenar modelos de Edge AI/ML. El SaaS multi-tenant consume y gestiona los eventos.
+
+Dos nodos sobre el **mismo hardware**, con firmwares distintos:
+
+| Nodo | Ubicación | Escucha | Detecta |
+|---|---|---|---|
+| **health** | Maternidad | Chillidos | Aplastamiento de lechones |
+| **breath** | Destete / Engorde | Respiración | Tos, grasnidos, dificultad respiratoria |
 
 ## Arquitectura
 
@@ -9,7 +16,7 @@ granja/
 ├── bio-acoustic-frontend/       → Web App SaaS (Next.js 14 + Supabase)
 ├── firmware/
 │   ├── bio-acoustic-health/     → Nodo IoT principal: Audio (ESP32-S3)
-│   └── bio-acoustic-bread/      → Nodo IoT secundario: Ambiente (ESP32-S3)
+│   └── bio-acoustic-breath/     → Nodo IoT secundario: Respiratorio (ESP32-S3)
 ├── docs/                        → Documentación y esquemas SQL
 ├── CONTEXT.MD                   → Fuente de verdad técnica
 └── BD_SCHEMA.md                 → Schema de base de datos

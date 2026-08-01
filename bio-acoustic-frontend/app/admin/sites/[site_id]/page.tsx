@@ -14,11 +14,8 @@ import {
   updateRoom,
   deleteBuilding,
   deleteRoom,
-  claimDeviceToRoom,
   supabase,
   Event,
-  Building,
-  Room,
   Device,
   SiteWithOrganization
 } from "@/lib/supabase";
@@ -42,43 +39,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { AdminIoTSimulator } from "@/components/admin/admin-iot-simulator";
-import { 
+import {
   ArrowLeft,
   Building2,
   Home,
   Cpu,
-  Activity,
   AlertTriangle,
   CheckCircle2,
   MapPin,
-  Wifi,
-  WifiOff,
   Plus,
-  MoreVertical,
-  Edit2,
-  Trash2,
   Save,
   RefreshCw
 } from "lucide-react";
 import { EventsTable } from "@/components/dashboard/events-table";
 import { AlertsChart } from "@/components/dashboard/alerts-chart";
+import { BuildingRoomTree } from "@/components/site-tree/building-room-tree";
+import type { BuildingWithRooms } from "@/components/site-tree/types";
+import { toast } from "sonner";
 
 export const dynamic = 'force-dynamic';
-
-interface RoomWithDevices extends Room {
-  devices: Device[];
-}
-
-interface BuildingWithRooms extends Building {
-  rooms: RoomWithDevices[];
-}
 
 type DialogMode = 'add_building' | 'add_room' | 'edit_building' | 'edit_room' | 'claim_device' | null;
 
@@ -114,7 +94,6 @@ export default function SiteInspectionPage() {
     deviceUid: ""
   });
   const [submitting, setSubmitting] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const fetchSiteData = async () => {
     try {
@@ -245,11 +224,6 @@ export default function SiteInspectionPage() {
     };
   }, [siteId]);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), 3000);
-  };
-
   const openDialog = async (mode: DialogMode, data?: Partial<DialogState>) => {
     setDialogState({ mode, ...data });
     setFormData({
@@ -288,10 +262,10 @@ export default function SiteInspectionPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newBuilding) {
-            showNotification('success', '✅ Edificio creado correctamente');
+            toast.success('Edificio creado correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al crear edificio');
+            toast.error('Error al crear edificio');
           }
           break;
 
@@ -304,10 +278,10 @@ export default function SiteInspectionPage() {
             formData.capacity ? parseInt(formData.capacity) : undefined
           );
           if (newRoom) {
-            showNotification('success', '✅ Sala creada correctamente');
+            toast.success('Sala creada correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al crear sala');
+            toast.error('Error al crear sala');
           }
           break;
 
@@ -318,10 +292,10 @@ export default function SiteInspectionPage() {
             building_type: formData.type || undefined
           });
           if (buildingUpdated) {
-            showNotification('success', '✅ Edificio actualizado');
+            toast.success('Edificio actualizado');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al actualizar edificio');
+            toast.error('Error al actualizar edificio');
           }
           break;
 
@@ -332,10 +306,10 @@ export default function SiteInspectionPage() {
             room_type: formData.type || undefined
           });
           if (roomUpdated) {
-            showNotification('success', '✅ Sala actualizada');
+            toast.success('Sala actualizada');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al actualizar sala');
+            toast.error('Error al actualizar sala');
           }
           break;
 
@@ -347,17 +321,17 @@ export default function SiteInspectionPage() {
             .eq('id', formData.deviceUid);
             
           if (!claimError) {
-            showNotification('success', '✅ Dispositivo vinculado correctamente');
+            toast.success('Dispositivo vinculado correctamente');
             await fetchSiteData();
           } else {
-            showNotification('error', '❌ Error al vincular dispositivo');
+            toast.error('Error al vincular dispositivo');
           }
           break;
       }
       closeDialog();
     } catch (error) {
       console.error('Error in handleSubmit:', error);
-      showNotification('error', '❌ Error en la operación');
+      toast.error('Error en la operación');
     } finally {
       setSubmitting(false);
     }
@@ -376,7 +350,7 @@ export default function SiteInspectionPage() {
           .eq('id', device.id);
         
         if (error) throw error;
-        showNotification('success', `✅ Dispositivo simulado como ${action}`);
+        toast.success(`Dispositivo simulado como ${action}`);
       } else if (action === 'alert') {
         const { error } = await supabase
           .from('acoustic_events')
@@ -389,13 +363,13 @@ export default function SiteInspectionPage() {
           });
           
         if (error) throw error;
-        showNotification('success', '✅ Alerta de prueba generada (RMS: 90.0)');
+        toast.success('Alerta de prueba generada (RMS: 90.0)');
       }
       
       await fetchSiteData();
     } catch (error) {
       console.error('Error simulating device:', error);
-      showNotification('error', '❌ Error al ejecutar simulación');
+      toast.error('Error al ejecutar simulación');
     }
   };
 
@@ -410,14 +384,14 @@ export default function SiteInspectionPage() {
         : await deleteRoom(id);
 
       if (success) {
-        showNotification('success', `✅ ${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
+        toast.success(`${type === 'building' ? 'Edificio' : 'Sala'} eliminado`);
         await fetchSiteData();
       } else {
-        showNotification('error', '❌ Error al eliminar');
+        toast.error('Error al eliminar');
       }
     } catch (error) {
       console.error('Error deleting:', error);
-      showNotification('error', '❌ Error al eliminar');
+      toast.error('Error al eliminar');
     }
   };
 
@@ -428,12 +402,6 @@ export default function SiteInspectionPage() {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
     const lastHeartbeat = new Date(device.last_heartbeat);
     return lastHeartbeat > tenMinutesAgo;
-  };
-
-  const hasOfflineDevices = (building: BuildingWithRooms) => {
-    return building.rooms.some(room => 
-      room.devices.some(device => !isDeviceOnline(device))
-    );
   };
 
   const formatHeartbeat = (heartbeat: string | null) => {
@@ -557,26 +525,6 @@ export default function SiteInspectionPage() {
         </div>
       </header>
 
-      {/* Notification */}
-      {notification && (
-        <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-top">
-          <Card className={`${
-            notification.type === 'success' 
-              ? 'border-emerald-500/50 bg-emerald-500/10' 
-              : 'border-red-500/50 bg-red-500/10'
-          }`}>
-            <CardContent className="p-4 flex items-center gap-2">
-              {notification.type === 'success' ? (
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              ) : (
-                <AlertTriangle className="h-5 w-5 text-red-500" />
-              )}
-              <span className="text-sm font-medium">{notification.message}</span>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-8">
         {/* IoT Simulator (Solo Super Admin) */}
@@ -652,242 +600,45 @@ export default function SiteInspectionPage() {
         <div className="flex items-center justify-between mt-12 animate-in-view stagger-5">
           <h2 className="text-xl font-bold tracking-tight">Infraestructura IoT</h2>
         </div>
-        {buildings.length === 0 ? (
-          <Card className="glass-effect">
-            <CardContent className="py-12 text-center">
-              <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" strokeWidth={1.5} />
-              <p className="text-lg font-medium text-muted-foreground">Sin buildings registrados</p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Este site aún no tiene estructura configurada.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-6">
-            {buildings.map((building) => {
-              const hasOffline = hasOfflineDevices(building);
-              const buildingDevices = building.rooms.reduce((sum, r) => sum + r.devices.length, 0);
-              const buildingOnline = building.rooms.reduce(
-                (sum, r) => sum + r.devices.filter(d => isDeviceOnline(d)).length, 
-                0
-              );
-
-              return (
-                <Card 
-                  key={building.id} 
-                  className={`glass-effect transition-all duration-300 ${
-                    hasOffline ? 'border-red-500/50 bg-red-500/5' : 'hover:border-primary/30'
-                  }`}
-                >
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Building2 className={`h-6 w-6 ${hasOffline ? 'text-red-500' : 'text-primary'}`} strokeWidth={2} />
-                        <div>
-                          <CardTitle className="text-lg">{building.name}</CardTitle>
-                          {building.building_type && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Tipo: {building.building_type}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge className={hasOffline ? 'alert-danger' : 'alert-success'}>
-                          {buildingOnline}/{buildingDevices} Online
-                        </Badge>
-                        {isSuperAdmin && (
-                          <>
-                            <Button
-                              size="sm"
-                              onClick={() => openDialog('add_room', { buildingId: building.id })}
-                            >
-                              <Plus className="h-4 w-4 mr-1" />
-                              Agregar Sala
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() => openDialog('edit_building', {
-                                    buildingId: building.id,
-                                    currentName: building.name,
-                                    currentType: building.building_type || undefined
-                                  })}
-                                >
-                                  <Edit2 className="h-4 w-4 mr-2" />
-                                  Editar Edificio
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-red-500"
-                                  onClick={() => handleDelete('building', building.id, building.name)}
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Eliminar Edificio
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {building.rooms.map((room) => (
-                        <div key={room.id} className="border border-border/50 rounded-lg p-4 bg-muted/30">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <Home className="h-4 w-4 text-amber-500" strokeWidth={2} />
-                              <span className="font-medium text-sm">{room.name}</span>
-                              {room.room_type && (
-                                <Badge variant="outline" className="text-xs">
-                                  {room.room_type}
-                                </Badge>
-                              )}
-                              <Badge variant="outline" className="text-xs">
-                                <Cpu className="h-3 w-3 mr-1" />
-                                {room.devices.length} dispositivo{room.devices.length !== 1 ? 's' : ''}
-                              </Badge>
-                            </div>
-                            {isSuperAdmin && (
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openDialog('claim_device', { roomId: room.id })}
-                                >
-                                  <Plus className="h-3 w-3 mr-1" />
-                                  Vincular
-                                </Button>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="sm">
-                                      <MoreVertical className="h-3 w-3" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                      onClick={() => openDialog('edit_room', {
-                                        roomId: room.id,
-                                        currentName: room.name,
-                                        currentType: room.room_type || undefined
-                                      })}
-                                    >
-                                      <Edit2 className="h-4 w-4 mr-2" />
-                                      Editar Sala
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      className="text-red-500"
-                                      onClick={() => handleDelete('room', room.id, room.name)}
-                                    >
-                                      <Trash2 className="h-4 w-4 mr-2" />
-                                      Eliminar Sala
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            )}
-                          </div>
-
-                          {room.devices.length === 0 ? (
-                            <p className="text-xs text-muted-foreground text-center py-4">
-                              Sin dispositivos instalados
-                            </p>
-                          ) : (
-                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                              {room.devices.map((device) => {
-                                const online = isDeviceOnline(device);
-                                return (
-                                  <div
-                                    key={device.id}
-                                    className={`border rounded-md p-3 ${
-                                      online 
-                                        ? 'border-emerald-500/30 bg-emerald-500/5' 
-                                        : 'border-red-500/30 bg-red-500/5'
-                                    }`}
-                                  >
-                                    <div className="flex items-start justify-between mb-2">
-                                      <div className="flex items-center gap-2">
-                                        {online ? (
-                                          <Wifi className="h-4 w-4 text-emerald-500" strokeWidth={2} />
-                                        ) : (
-                                          <WifiOff className="h-4 w-4 text-red-500" strokeWidth={2} />
-                                        )}
-                                        <span className={`text-xs font-medium ${
-                                          online ? 'text-emerald-500' : 'text-red-500'
-                                        }`}>
-                                          {online ? 'Online' : 'Offline'}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-1">
-                                        <Badge variant="outline" className="text-[10px] font-mono">
-                                          {device.status}
-                                        </Badge>
-                                        
-                                        <DropdownMenu>
-                                          <DropdownMenuTrigger asChild>
-                                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                                              <MoreVertical className="h-4 w-4" />
-                                            </Button>
-                                          </DropdownMenuTrigger>
-                                          <DropdownMenuContent align="end">
-                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'online')}>
-                                              <Activity className="h-4 w-4 mr-2" /> Simular Online
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'offline')}>
-                                              <WifiOff className="h-4 w-4 mr-2" /> Simular Offline
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onClick={() => handleSimulateDevice(device, 'alert')}>
-                                              <AlertTriangle className="h-4 w-4 mr-2 text-amber-500" /> Generar Alerta de Prueba
-                                            </DropdownMenuItem>
-                                          </DropdownMenuContent>
-                                        </DropdownMenu>
-                                      </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                      <div className="text-xs">
-                                        <span className="text-muted-foreground">Nombre:</span>
-                                        <span className="ml-2 font-medium">{device.name || 'Sin nombre'}</span>
-                                      </div>
-                                      <div className="text-xs font-mono bg-muted/50 p-1.5 rounded">
-                                        <span className="text-muted-foreground">UID:</span>
-                                        <span className="ml-2 text-primary font-semibold">{device.uid || device.mac_address || device.device_id}</span>
-                                      </div>
-                                      <div className="text-xs">
-                                        <span className="text-muted-foreground">Heartbeat:</span>
-                                        <span className={`ml-2 ${
-                                          online ? 'text-emerald-500' : 'text-red-500'
-                                        }`}>
-                                          {formatHeartbeat(device.last_heartbeat)}
-                                        </span>
-                                      </div>
-                                      {device.firmware_version && (
-                                        <div className="text-xs">
-                                          <span className="text-muted-foreground">FW:</span>
-                                          <span className="ml-2 font-mono">{device.firmware_version}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+        <BuildingRoomTree
+          buildings={buildings}
+          deviceVariant="detailed"
+          canEdit={isSuperAdmin}
+          showSimulateMenu={isSuperAdmin}
+          showHealthBadges
+          isDeviceOnline={isDeviceOnline}
+          onAddRoom={(buildingId) => openDialog("add_room", { buildingId })}
+          onEditBuilding={(b) =>
+            openDialog("edit_building", {
+              buildingId: b.id,
+              currentName: b.name,
+              currentType: b.building_type || undefined,
+            })
+          }
+          onDeleteBuilding={(b) => handleDelete("building", b.id, b.name)}
+          onEditRoom={(_b, r) =>
+            openDialog("edit_room", {
+              roomId: r.id,
+              currentName: r.name,
+              currentType: r.room_type || undefined,
+            })
+          }
+          onDeleteRoom={(_b, r) => handleDelete("room", r.id, r.name)}
+          onClaimDevice={(roomId) => openDialog("claim_device", { roomId })}
+          onSimulateDevice={handleSimulateDevice}
+          formatHeartbeat={formatHeartbeat}
+          emptyState={
+            <Card className="glass-effect">
+              <CardContent className="py-12 text-center">
+                <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" strokeWidth={1.5} />
+                <p className="text-lg font-medium text-muted-foreground">Sin buildings registrados</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Este site aún no tiene estructura configurada.
+                </p>
+              </CardContent>
+            </Card>
+          }
+        />
       </main>
 
       {/* Universal Dialog for CRUD Operations */}
@@ -895,11 +646,11 @@ export default function SiteInspectionPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {dialogState.mode === 'add_building' && '➕ Agregar Nuevo Edificio/Nave'}
-              {dialogState.mode === 'add_room' && '➕ Agregar Nueva Sala'}
-              {dialogState.mode === 'edit_building' && '✏️ Editar Edificio'}
-              {dialogState.mode === 'edit_room' && '✏️ Editar Sala'}
-              {dialogState.mode === 'claim_device' && '🔗 Vincular Dispositivo IoT'}
+              {dialogState.mode === 'add_building' && 'Agregar Nuevo Edificio/Nave'}
+              {dialogState.mode === 'add_room' && 'Agregar Nueva Sala'}
+              {dialogState.mode === 'edit_building' && 'Editar Edificio'}
+              {dialogState.mode === 'edit_room' && 'Editar Sala'}
+              {dialogState.mode === 'claim_device' && 'Vincular Dispositivo IoT'}
             </DialogTitle>
             <DialogDescription asChild>
               <div>

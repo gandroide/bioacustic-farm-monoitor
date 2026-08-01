@@ -44,6 +44,7 @@ import {
   PackagePlus,
   Wand2
 } from "lucide-react";
+import { toast } from "sonner";
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +69,6 @@ export default function InventoryPage() {
     name: ""
   });
   const [submitting, setSubmitting] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const fetchDevices = async () => {
     try {
@@ -90,7 +90,7 @@ export default function InventoryPage() {
       setDevices(data || []);
     } catch (error) {
       console.error('Error fetching devices:', error);
-      showNotification('error', '❌ Error al cargar dispositivos');
+      toast.error('Error al cargar dispositivos');
     } finally {
       setLoading(false);
     }
@@ -99,11 +99,6 @@ export default function InventoryPage() {
   useEffect(() => {
     fetchDevices();
   }, []);
-
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), 4000);
-  };
 
   const openDialog = async (mode: DialogMode, device?: UnassignedDevice) => {
     setDialogMode(mode);
@@ -165,7 +160,7 @@ export default function InventoryPage() {
 
   const handleSubmit = async () => {
     if (!formData.mac_address?.trim() && !formData.uid?.trim()) {
-      showNotification('error', '❌ Debes proveer un UID o una Dirección MAC');
+      toast.error('Debes proveer un UID o una Dirección MAC');
       return;
     }
 
@@ -187,15 +182,15 @@ export default function InventoryPage() {
         if (error) {
           // Manejar error de duplicado
           if (error.code === '23505') {
-            showNotification('error', '❌ Este Device UID ya está registrado');
+            toast.error('Este Device UID ya está registrado');
           } else {
-            showNotification('error', `❌ Error: ${error.message}`);
+            toast.error(`Error: ${error.message}`);
           }
           setSubmitting(false);
           return;
         }
 
-        showNotification('success', '✅ Dispositivo registrado correctamente');
+        toast.success('Dispositivo registrado correctamente');
       } else if (dialogMode === 'edit' && selectedDevice) {
         // Editar dispositivo existente
         const { error } = await supabase
@@ -210,22 +205,22 @@ export default function InventoryPage() {
 
         if (error) {
           if (error.code === '23505') {
-            showNotification('error', '❌ Este Device UID ya está registrado');
+            toast.error('Este Device UID ya está registrado');
           } else {
-            showNotification('error', `❌ Error: ${error.message}`);
+            toast.error(`Error: ${error.message}`);
           }
           setSubmitting(false);
           return;
         }
 
-        showNotification('success', '✅ Dispositivo actualizado correctamente');
+        toast.success('Dispositivo actualizado correctamente');
       }
 
       closeDialog();
       await fetchDevices();
     } catch (error) {
       console.error('Error saving device:', error);
-      showNotification('error', '❌ Error al guardar dispositivo');
+      toast.error('Error al guardar dispositivo');
     } finally {
       setSubmitting(false);
     }
@@ -244,11 +239,11 @@ export default function InventoryPage() {
 
       if (error) throw error;
 
-      showNotification('success', '✅ Dispositivo eliminado');
+      toast.success('Dispositivo eliminado');
       await fetchDevices();
     } catch (error) {
       console.error('Error deleting device:', error);
-      showNotification('error', '❌ Error al eliminar dispositivo');
+      toast.error('Error al eliminar dispositivo');
     }
   };
 
@@ -298,26 +293,6 @@ export default function InventoryPage() {
           </div>
         </div>
       </header>
-
-      {/* Notification */}
-      {notification && (
-        <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-top">
-          <Card className={`${
-            notification.type === 'success' 
-              ? 'border-emerald-500/50 bg-emerald-500/10' 
-              : 'border-red-500/50 bg-red-500/10'
-          }`}>
-            <CardContent className="p-4 flex items-center gap-2">
-              {notification.type === 'success' ? (
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              ) : (
-                <AlertCircle className="h-5 w-5 text-red-500" />
-              )}
-              <span className="text-sm font-medium">{notification.message}</span>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-6">
@@ -482,7 +457,7 @@ export default function InventoryPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {dialogMode === 'create' ? '➕ Registrar Nuevo Dispositivo' : '✏️ Editar Dispositivo'}
+              {dialogMode === 'create' ? 'Registrar Nuevo Dispositivo' : 'Editar Dispositivo'}
             </DialogTitle>
             <DialogDescription asChild>
               <div>

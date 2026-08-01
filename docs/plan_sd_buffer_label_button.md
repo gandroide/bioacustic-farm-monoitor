@@ -95,7 +95,7 @@ Antes de este plan, se pensaba que `bio-acoustic-frontend` era esqueleto con sol
 - **Columnas en `devices`:** faltan `ingest_token`, `last_seen` — Fase 0-B.
 - **Columnas en `acoustic_events`:** ya existen `event_type`, `audio_url`, `room_id`, `rms_level`, `battery_percentage`. Faltan `site_id`, `baseline_rms`, `peak_rms`, `dominant_freq_hz`, `temp_c`, `uptime_ms`, `operator_label`, `metadata` — Fase 0-A.
 - **`middleware.ts`:** no existe — Fase 0-D (auth server-side).
-- **Firmware `bio-acoustic-bread`:** 42 líneas skeleton — fuera del alcance de este plan.
+- **Firmware `bio-acoustic-breath`:** 42 líneas skeleton — fuera del alcance de este plan.
 
 ### Deuda técnica identificada (no bloqueante para v2)
 
@@ -750,5 +750,5 @@ Esto es una operación real de release que planificamos en su propio documento c
 
 - Provisión física del segundo botón (hardware). Se asume que el operador conectará un pulsador `INPUT_PULLUP` a GPIO 8 antes de las pruebas de Fase 2.
 - Modelo Edge AI/ML (fase posterior del proyecto).
-- Nodo `bio-acoustic-bread` (ambiental) — sin cambios en este plan.
+- Nodo `bio-acoustic-breath` (respiratorio) — sin cambios en este plan.
 - UI en el frontend para reproducir/etiquetar/descargar WAVs desde el bucket (candidato natural para un plan aparte).

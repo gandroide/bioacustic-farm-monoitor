@@ -430,7 +430,7 @@ DOCUMENTACION
 
 ## 📖 Descripción del Proyecto
 
-Brivex Bio-Alert es una plataforma SaaS Multi-Tenant diseñada para el monitoreo bio-acústico en granjas porcinas. El sistema permite detectar enfermedades respiratorias mediante el análisis de audio en tiempo real, ofreciendo dashboards diferenciados para la gestión operativa (Granjeros) y la gestión de negocio/hardware (Super Admin).
+Brivex Bio-Alert es una plataforma SaaS Multi-Tenant diseñada para el monitoreo bio-acústico en granjas porcinas. El sistema analiza audio en tiempo real para detectar aplastamiento de lechones en maternidad (nodo `health`) y problemas respiratorios en destete/engorde (nodo `breath`), ofreciendo dashboards diferenciados para la gestión operativa (Granjeros) y la gestión de negocio/hardware (Super Admin).
 
 La arquitectura ha sido refactorizada para soportar desde pequeños productores hasta grandes corporaciones (como Plumrose) mediante una estructura jerárquica escalable.
 
